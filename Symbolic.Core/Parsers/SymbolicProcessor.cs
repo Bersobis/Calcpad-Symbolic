@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AngouriMath;
 using static AngouriMath.MathS;
 
@@ -35,7 +36,20 @@ namespace Calcpad.Core
         {
             try
             {
-                var (op, args) = ParseCommand(command.Trim());
+                // If command contains pdiff() inside a larger expression (matrix, assignment),
+                // expand pdiff symbolically and return as Calcpad expression
+                var trimmed = command.Trim();
+                if (trimmed.Contains("pdiff(") && !trimmed.StartsWith("pdiff(", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Try to expand pdiff symbolically into Calcpad expression
+                    var symExpanded = ExpandPdiffSymbolic(trimmed);
+                    if (symExpanded.HasValue)
+                        return symExpanded.Value;
+                    // Fallback to HTML notation
+                    return ExpandPdiffNotation(trimmed);
+                }
+
+                var (op, args) = ParseCommand(trimmed);
                 return op.ToLowerInvariant() switch
                 {
                     "diff" or "derivative" => Diff(args),
@@ -254,6 +268,343 @@ namespace Calcpad.Core
             return new SymResult(a[0], TC(r));
         }
 
+        /// <summary>
+        /// Expand pdiff() inside a larger expression to ∂ notation for display.
+        /// E.g., Jc(ξ; η) = [pdiff(xc(ξ; η); ξ); pdiff(yc(ξ; η); ξ)|...]
+        /// Each pdiff(expr; var) becomes (∂/∂var)(expr) rendered with TAG_DERIV
+        /// </summary>
+        /// <summary>
+        /// Expand pdiff() symbolically: replace each pdiff(expr; var) with the AngouriMath result.
+        /// Returns SymResult with original expression and expanded result as two Parts.
+        /// Returns null if any pdiff can't be computed symbolically.
+        /// </summary>
+        private static SymResult? ExpandPdiffSymbolic(string command)
+        {
+            // Replace each pdiff(expr; var) with the symbolic derivative
+            var result = new System.Text.StringBuilder();
+            int pos = 0;
+            bool allResolved = true;
+
+            while (pos < command.Length)
+            {
+                int idx = command.IndexOf("pdiff(", pos, StringComparison.Ordinal);
+                if (idx < 0) { result.Append(command, pos, command.Length - pos); break; }
+                result.Append(command, pos, idx - pos);
+
+                int open = idx + 5;
+                int depth = 1, ci = open + 1;
+                while (ci < command.Length && depth > 0)
+                {
+                    if (command[ci] == '(') depth++;
+                    else if (command[ci] == ')') depth--;
+                    ci++;
+                }
+                var inner = command[(open + 1)..(ci - 1)];
+                var parts = SplitSemicolon(inner);
+
+                if (parts.Length >= 2)
+                {
+                    var expr = parts[0].Trim();
+                    var variable = parts[1].Trim();
+
+                    // Can only derive pure algebraic (no ; in expr = no user function args)
+                    if (expr.IndexOf(';') >= 0) { allResolved = false; break; }
+
+                    try
+                    {
+                        Entity e = expr;
+                        var v = Var(variable);
+                        var r = e.Differentiate(v).Simplify();
+                        var rs = TC(r);
+                        if (rs.Contains("Derivative", StringComparison.OrdinalIgnoreCase))
+                        { allResolved = false; break; }
+                        result.Append(rs);
+                    }
+                    catch { allResolved = false; break; }
+                }
+                else
+                { allResolved = false; break; }
+
+                pos = ci;
+            }
+
+            if (!allResolved) return null;
+
+            // Return the expanded result as Calcpad expression
+            // ParseInlineSym will render it with Calcpad's template
+            var expanded = result.ToString();
+            // Also build ∂ notation HTML for display
+            var notationHtml = ExpandPdiffCalls(command);
+            var matrixHtml = RenderMatrixHtml(notationHtml);
+            // Return: TAG_HTML notation = Calcpad expression
+            return new SymResult($"{TAG_HTML}{matrixHtml}", expanded);
+        }
+
+        private static SymResult ExpandPdiffNotation(string command)
+        {
+            // 1. Expand pdiff() to ∂ HTML fractions (display notation)
+            var expanded = ExpandPdiffCalls(command);
+            // 2. Render matrices [a; b|c; d] as HTML matrix tables
+            var html = RenderMatrixHtml(expanded);
+
+            // 3. Try to compute symbolic results for each pdiff
+            var resultHtml = ComputePdiffResults(command);
+            if (!string.IsNullOrEmpty(resultHtml))
+                html += " = " + resultHtml;
+
+            return new SymResult($"{TAG_HTML}{html}");
+        }
+
+        /// <summary>Compute symbolic/display results for pdiff calls in a matrix expression</summary>
+        private static string? ComputePdiffResults(string command)
+        {
+            // Find the matrix part [...]  — either after = or standalone
+            string matSource = command;
+            int eqIdx = command.IndexOf('=');
+            if (eqIdx >= 0)
+                matSource = command[(eqIdx + 1)..].Trim();
+
+            // Find [ that starts the matrix
+            int matStart = matSource.IndexOf('[');
+            if (matStart < 0) return null;
+
+            // Find matching ]
+            int depth = 0, endBrk = matStart;
+            for (int i = matStart; i < matSource.Length; i++)
+            {
+                if (matSource[i] == '[') depth++;
+                else if (matSource[i] == ']') { depth--; if (depth == 0) { endBrk = i; break; } }
+            }
+            var matContent = matSource[(matStart + 1)..endBrk];
+
+            // Split into rows by |, cells by ;
+            var rows = SplitByPipe(matContent);
+            var resultRows = new System.Collections.Generic.List<string[]>();
+            bool hasResults = false;
+
+            foreach (var row in rows)
+            {
+                var cells = SplitBySemicolon(row);
+                var resultCells = new string[cells.Length];
+                for (int j = 0; j < cells.Length; j++)
+                {
+                    var cell = cells[j].Trim();
+                    // Check if cell is pdiff(expr; var)
+                    if (cell.StartsWith("pdiff(") && cell.EndsWith(")"))
+                    {
+                        var inner = cell[6..^1];
+                        var parts = SplitSemicolon(inner);
+                        if (parts.Length >= 2)
+                        {
+                            var expr = parts[0].Trim();
+                            var variable = parts[1].Trim();
+                            // Only try symbolic if expression has no ; (pure algebraic)
+                            bool canDerive = expr.IndexOf(';') < 0;
+                            if (canDerive)
+                            {
+                                try
+                                {
+                                    Entity e = expr;
+                                    var v = Var(variable);
+                                    var r = e.Differentiate(v).Simplify();
+                                    var rs = TC(r);
+                                    if (!rs.Contains("Derivative", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        resultCells[j] = rs;
+                                        hasResults = true;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        else
+                            resultCells[j] = cell;
+                    }
+                    else
+                    {
+                        resultCells[j] = cell;
+                        if (cell != "0") hasResults = true;
+                    }
+                }
+                resultRows.Add(resultCells);
+            }
+
+            if (!hasResults) return null;
+
+            // Build result matrix HTML
+            var sb = new System.Text.StringBuilder("<span class=\"matrix\">");
+            foreach (var row in resultRows)
+            {
+                sb.Append("<span class=\"tr\"><span class=\"td\"></span>");
+                foreach (var cell in row)
+                    sb.Append($"<span class=\"td\">{cell}</span>");
+                sb.Append("<span class=\"td\"></span></span>");
+            }
+            sb.Append("</span>");
+            return sb.ToString();
+        }
+
+        /// <summary>Replace pdiff(expr; var) with HTML fraction ∂/∂var · expr</summary>
+        private static string ExpandPdiffCalls(string command)
+        {
+            var sb = new System.Text.StringBuilder();
+            int pos = 0;
+            while (pos < command.Length)
+            {
+                int idx = command.IndexOf("pdiff(", pos, StringComparison.Ordinal);
+                if (idx < 0) { sb.Append(command, pos, command.Length - pos); break; }
+                sb.Append(command, pos, idx - pos);
+
+                int open = idx + 5;
+                int depth = 1, ci = open + 1;
+                while (ci < command.Length && depth > 0)
+                {
+                    if (command[ci] == '(') depth++;
+                    else if (command[ci] == ')') depth--;
+                    ci++;
+                }
+                var inner = command[(open + 1)..(ci - 1)];
+                var parts = SplitSemicolon(inner);
+
+                if (parts.Length >= 2)
+                {
+                    var expr = parts[0].Trim();
+                    var variable = parts[1].Trim();
+                    // Fraction ∂/∂var
+                    sb.Append($"<span class=\"dvc\">\u2202<span class=\"dvl\"></span>\u2202<var>{variable}</var></span>");
+                    // Body: function name with args — preserve ; in arguments
+                    sb.Append($"\u2009{RenderExprHtml(expr)}");
+                }
+                else
+                    sb.Append(command, idx, ci - idx);
+                pos = ci;
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Render [a; b|c; d] as Calcpad HTML matrix</summary>
+        private static string RenderMatrixHtml(string s)
+        {
+            // Find [...] at top level
+            var sb = new System.Text.StringBuilder();
+            int pos = 0;
+            while (pos < s.Length)
+            {
+                int brk = -1;
+                // Find [ that starts a matrix (not inside HTML tags)
+                int tagDepth = 0;
+                for (int i = pos; i < s.Length; i++)
+                {
+                    if (s[i] == '<') tagDepth++;
+                    else if (s[i] == '>') tagDepth--;
+                    else if (s[i] == '[' && tagDepth == 0) { brk = i; break; }
+                }
+                if (brk < 0) { sb.Append(s, pos, s.Length - pos); break; }
+                sb.Append(s, pos, brk - pos);
+
+                // Find matching ]
+                int depth = 1, endBrk = brk + 1;
+                int htmlTag = 0;
+                while (endBrk < s.Length && depth > 0)
+                {
+                    if (s[endBrk] == '<') htmlTag++;
+                    else if (s[endBrk] == '>') htmlTag--;
+                    else if (htmlTag == 0)
+                    {
+                        if (s[endBrk] == '[') depth++;
+                        else if (s[endBrk] == ']') depth--;
+                    }
+                    if (depth > 0) endBrk++;
+                }
+
+                var matContent = s[(brk + 1)..endBrk];
+                // Split by | for rows (respecting HTML tags)
+                var rows = SplitByPipe(matContent);
+
+                sb.Append("<span class=\"matrix\">");
+                foreach (var row in rows)
+                {
+                    sb.Append("<span class=\"tr\"><span class=\"td\"></span>");
+                    var cols = SplitBySemicolon(row);
+                    foreach (var col in cols)
+                        sb.Append($"<span class=\"td\">{col.Trim()}</span>");
+                    sb.Append("<span class=\"td\"></span></span>");
+                }
+                sb.Append("</span>");
+
+                pos = endBrk + 1;
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Split string by | respecting HTML tags</summary>
+        private static string[] SplitByPipe(string s)
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            int tag = 0, st = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '<') tag++;
+                else if (s[i] == '>') tag--;
+                else if (s[i] == '|' && tag == 0) { parts.Add(s[st..i]); st = i + 1; }
+            }
+            parts.Add(s[st..]);
+            return parts.ToArray();
+        }
+
+        /// <summary>Split string by ; respecting HTML tags and parentheses</summary>
+        private static string[] SplitBySemicolon(string s)
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            int tag = 0, paren = 0, st = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '<') tag++;
+                else if (s[i] == '>') { if (tag > 0) tag--; }
+                else if (tag == 0)
+                {
+                    if (s[i] == '(') paren++;
+                    else if (s[i] == ')') paren--;
+                    else if (s[i] == ';' && paren == 0) { parts.Add(s[st..i]); st = i + 1; }
+                }
+            }
+            parts.Add(s[st..]);
+            return parts.ToArray();
+        }
+
+        /// <summary>Split by semicolon respecting parens</summary>
+        private static string[] SplitSemicolon(string s)
+        {
+            var r = new System.Collections.Generic.List<string>();
+            int d = 0, st = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] is '(' or '[') d++;
+                else if (s[i] is ')' or ']') d--;
+                else if (s[i] == ';' && d == 0) { r.Add(s[st..i]); st = i + 1; }
+            }
+            r.Add(s[st..]);
+            return r.ToArray();
+        }
+
+        /// <summary>Render a variable/function name as HTML var tags</summary>
+        /// <summary>Render expression as HTML — wraps variable names in var tags, preserves ; and ()</summary>
+        private static string RenderExprHtml(string expr)
+        {
+            // Parse function call: name(arg1; arg2)
+            int pOpen = expr.IndexOf('(');
+            if (pOpen > 0 && expr.EndsWith(")"))
+            {
+                var funcName = expr[..pOpen].Trim();
+                var argsStr = expr[(pOpen + 1)..^1];
+                var args = SplitSemicolon(argsStr);
+                var htmlArgs = string.Join("; ", args.Select(a => $"<var>{a.Trim()}</var>"));
+                return $"<var>{funcName}</var>({htmlArgs})";
+            }
+            // Simple variable or expression
+            return $"<var>{expr}</var>";
+        }
+
         private static SymResult Expression(string s)
         {
             Entity e = s;
@@ -271,17 +622,27 @@ namespace Calcpad.Core
         private static SymResult PartialDiff(string[] a)
         {
             if (a.Length < 2) return Err("pdiff(expr; var) o pdiff(expr; var; n)");
-            Entity e = a[0];
-            var v = Var(a[1]);
             int n = a.Length >= 3 && int.TryParse(a[2], out var nn) ? nn : 1;
-            Entity r = e;
-            for (int i = 0; i < n; i++) r = r.Differentiate(v);
-            r = r.Simplify();
 
             string num, den;
             if (n == 1) { num = "\u2202"; den = $"\u2202{a[1]}"; }
             else { num = $"\u2202^{n}"; den = $"\u2202{a[1]}^{n}"; }
-            return new SymResult($"{TAG_DERIV}{num}|{den}|{a[0]}", TC(r));
+
+            // Try symbolic differentiation with AngouriMath
+            try
+            {
+                Entity e = a[0];
+                var v = Var(a[1]);
+                Entity r = e;
+                for (int i = 0; i < n; i++) r = r.Differentiate(v);
+                r = r.Simplify();
+                return new SymResult($"{TAG_DERIV}{num}|{den}|{a[0]}", TC(r));
+            }
+            catch
+            {
+                // Fallback: show ∂ notation only (for user-defined functions like xc(ξ;η))
+                return new SymResult($"{TAG_DERIV}{num}|{den}|{a[0]}");
+            }
         }
 
         /// <summary>

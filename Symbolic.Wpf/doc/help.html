@@ -556,7 +556,7 @@
                 </li>
             </ul>
         </li>
-        <li>Comments: <a href="#0" data-text="&quot;Title&quot;"><b>"Title"</b></a> or <a href="#0" data-text="'text'"><b>'text'</b></a> in double or single quotes. <strong>HTML</strong>, <strong>CSS</strong>, <strong>JS</strong> and <strong>SVG</strong> are allowed.</li>
+        <li>Comments: <a href="#0" data-text="&quot;Title&quot;"><b>"Title"</b></a> or <a href="#0" data-text="'text'"><b>'text'</b></a> in double or single quotes. <strong>HTML</strong>, <strong>CSS</strong>, <strong>JS</strong> and <strong>SVG</strong> are allowed. Use <b>~</b> for non-breaking space (&amp;nbsp;): <code>'text~'var'~~more'</code></li>
         <li style="list-style-type: none;">
             <span class="exp" id="btn4">+</span>Graphing and plotting:<br />
             <span id="list4" style="display: none;">
@@ -565,6 +565,8 @@
                 <a href="#0" data-text="$Plot{f_1(x) & f_2(x) @ x = a : b}"><span class="cond">$Plot</span><span class="b">{</span><b>f</b><sub>1</sub><span class="b">(</span><var>x</var><span class="b">)</span> <span class="o">&amp;</span> <b>f</b><sub>2</sub><span class="b">(</span><var>x</var><span class="b">)</span> <span class="o">&amp;</span> … <span class="o">&#64;</span> <var>x</var> <span class="o">=</span> <var>a</var> <span class="o">:</span> <var>b</var><span class="b">}</span></a> - multiple;<br />
                 <a href="#0" data-text="$Plot{x_1(x) | y_1(t) & x_2(x) | y_2(t) @ t = a : b}"><span class="cond">$Plot</span><span class="b">{</span><b>x</b><sub>1</sub><span class="b">(</span><var>t</var><span class="b">)</span> <span class="o">|</span> <b>y</b><sub>1</sub><span class="b">(</span><var>t</var><span class="b">)</span> <span class="o">&amp;</span> <b>x</b><sub>2</sub><span class="b">(</span><var>t</var><span class="b">)</span> <span class="o">|</span> <b>y</b><sub>2</sub><span class="b">(</span><var>t</var><span class="b">)</span> <span class="o">&amp;</span> … <span class="o">&#64;</span> <var>t</var> <span class="o">=</span> <var>a</var> <span class="o">:</span> <var>b</var><span class="b">}</span></a> - multiple parametric;<br />
                 <a href="#0" data-text="$Map{f(x; y) @ x = a : b & y = c : d}"><span class="cond">$Map</span><span class="b">{</span><b>f</b><span class="b">(</span><var>x</var><span class="o">;</span> <var>y</var><span class="b">)</span> <span class="o">&#64;</span> <var>x</var> <span class="o">=</span> <var>a</var> <span class="o">:</span> <var>b</var> <span class="o">&amp;</span> <var>y</var> <span class="o">=</span> <var>c</var> <span class="o">:</span> <var>d</var><span class="b">}</span></a> - 2D color map of a 3D surface;<br />
+                <a href="#0" data-text="$PlotMap{xj; yj; values; ej}"><span class="cond">$PlotMap</span><span class="b">{</span><var>xj</var><span class="o">;</span> <var>yj</var><span class="o">;</span> <var>values</var><span class="o">;</span> <var>ej</var><span class="b">}</span></a> - FEM color map on arbitrary mesh (xj,yj=node coords, values=scalar field, ej=connectivity matrix);<br />
+                <a href="#0" data-text='$Table{v1; v2; v3 @ "H1"; "H2"; "H3" & fmt=4 & row=1}'><span class="cond">$Table</span><span class="b">{</span><var>v1</var><span class="o">;</span> <var>v2</var><span class="o">;</span> <var>v3</var> <span class="o">&#64;</span> "H1"<span class="o">;</span> "H2"<span class="o">;</span> "H3" <span class="o">&amp;</span> fmt=4 <span class="o">&amp;</span> row=1<span class="b">}</span></a> - HTML table from vectors/matrices (fmt=decimals, row=1 show row#, border=0 no borders, zebra=0 no stripes);<br />
                 <a href="#0" data-text="PlotHeight ="><var>PlotHeight</var></a> - height of plot area in pixels;<br />
                 <a href="#0" data-text="PlotWidth ="><var>PlotWidth</var></a> - width of plot area in pixels;<br />
                 <a href="#0" data-text="PlotSVG ="><var>PlotSVG</var></a> - draw plots in vector, SVG format (= 1) or raster, PNG (= 0);<br />
@@ -789,6 +791,149 @@
                 <a href="#0" data-text="#phasor"><span class="cond">#phasor</span></a> - sets output format of complex numbers to polar phasor: A∠φ;<br />
                 <a href="#0" data-text="#complex"><span class="cond">#complex</span></a> - sets output format of complex numbers to Cartesian algebraic: a + bi.<br />
                 Each of the above commands is effective after the current line until the end of the report or another command that overrides it.
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_sym">+</span><b>Symbolic Math (#sym) — AngouriMath engine:</b><br />
+            <span id="list_sym" style="display: none;">
+                <b>Calculus:</b><br />
+                <a href="#0" data-text="#sym diff(x^2+3*x; x)"><span class="cond">#sym diff</span>(expr; var)</a> - derivative;<br />
+                <a href="#0" data-text="#sym diff(x^3; x; 2)"><span class="cond">#sym diff</span>(expr; var; n)</a> - nth derivative;<br />
+                <a href="#0" data-text="#sym integrate(x^2; x)"><span class="cond">#sym integrate</span>(expr; var)</a> - indefinite integral;<br />
+                <a href="#0" data-text="#sym integrate(x^2; x; 0; 1)"><span class="cond">#sym integrate</span>(expr; var; a; b)</a> - definite integral;<br />
+                <a href="#0" data-text="#sym limit(sin(x)/x; x; 0)"><span class="cond">#sym limit</span>(expr; var; value)</a> - limit;<br />
+                <a href="#0" data-text="#sym series(sin(x); x; 5)"><span class="cond">#sym series</span>(expr; var; n)</a> - Taylor series;<br />
+                <a href="#0" data-text="#sym pdiff(x^2*y+y^3; x)"><span class="cond">#sym pdiff</span>(expr; var)</a> - partial derivative (∂);<br />
+                <br />
+                <b>Algebra:</b><br />
+                <a href="#0" data-text="#sym simplify((x^2-1)/(x-1))"><span class="cond">#sym simplify</span>(expr)</a> - simplify;<br />
+                <a href="#0" data-text="#sym expand((a+b)^3)"><span class="cond">#sym expand</span>(expr)</a> - expand;<br />
+                <a href="#0" data-text="#sym factor(x^2-5*x+6)"><span class="cond">#sym factor</span>(expr)</a> - factorize;<br />
+                <a href="#0" data-text="#sym solve(x^2-4; x)"><span class="cond">#sym solve</span>(expr; var)</a> - solve equation = 0;<br />
+                <a href="#0" data-text="#sym eval(sqrt(2))"><span class="cond">#sym eval</span>(expr)</a> - evaluate numerically;<br />
+                <a href="#0" data-text="#sym subs(x^2; x; 3)"><span class="cond">#sym subs</span>(expr; var; value)</a> - substitute;<br />
+                <br />
+                <b>Vector Calculus / FEM:</b><br />
+                <a href="#0" data-text="#sym gradient(x^2+y^2; x; y)"><span class="cond">#sym gradient</span>(f; x; y; z)</a> - gradient ∇f;<br />
+                <a href="#0" data-text="#sym divergence(x^2; y^2; z^2; x; y; z)"><span class="cond">#sym divergence</span>(F1; F2; F3; x; y; z)</a> - divergence ∇·F;<br />
+                <a href="#0" data-text="#sym curl(y*z; x*z; x*y; x; y; z)"><span class="cond">#sym curl</span>(F1; F2; F3; x; y; z)</a> - curl ∇×F;<br />
+                <a href="#0" data-text="#sym laplacian(x^2+y^2; x; y)"><span class="cond">#sym laplacian</span>(f; x; y; z)</a> - Laplacian ∇²f;<br />
+                <a href="#0" data-text="#sym jacobian(x^2; y^2; x; y)"><span class="cond">#sym jacobian</span>(f1; f2; x; y)</a> - Jacobian matrix;<br />
+                <a href="#0" data-text="#sym hessian(x^3+x*y^2; x; y)"><span class="cond">#sym hessian</span>(f; x; y)</a> - Hessian matrix;<br />
+                <a href="#0" data-text="#sym strain(x^2*y; x*y^2; x; y)"><span class="cond">#sym strain</span>(u; v; x; y)</a> - strain tensor 2D/3D;<br />
+                <a href="#0" data-text="#sym stress(0.001; 0.002; 0.0005; 200000; 0.3)"><span class="cond">#sym stress</span>(ε11; ε22; ε12; E; ν)</a> - stress tensor (Hooke);<br />
+                <a href="#0" data-text="#sym voigt(a; b; c; d)"><span class="cond">#sym voigt</span>(a; b; c; d)</a> - Voigt notation;<br />
+                <a href="#0" data-text="#sym invariants(3; 1; 1; 2)"><span class="cond">#sym invariants</span>(a; b; c; d)</a> - tensor invariants;<br />
+                <a href="#0" data-text="#sym dyadic(1; 2; 3; 4)"><span class="cond">#sym dyadic</span>(a1; a2; b1; b2)</a> - dyadic product ⊗;<br />
+                <br />
+                <b>Laplace Transform:</b><br />
+                <a href="#0" data-text="#sym laplace(sin(t); t; s)"><span class="cond">#sym laplace</span>(f; t; s)</a> - Laplace transform ℒ{f(t)};<br />
+                <a href="#0" data-text="#sym ilaplace(1/s; s; t)"><span class="cond">#sym ilaplace</span>(F; s; t)</a> - inverse Laplace ℒ⁻¹{F(s)};<br />
+                <br />
+                <b>ODE Solver:</b><br />
+                <a href="#0" data-text="#sym ode1(2)"><span class="cond">#sym ode1</span>(a)</a> - 1st order: y' + ay = 0;<br />
+                <a href="#0" data-text="#sym ode2(0; 4)"><span class="cond">#sym ode2</span>(a; b)</a> - 2nd order: y'' + ay' + by = 0;<br />
+                <br />
+                <b>Matrix Operations:</b><br />
+                <a href="#0" data-text="#sym det(a; b; c; d)"><span class="cond">#sym det</span>(a; b; c; d)</a> - determinant 2x2/3x3;<br />
+                <a href="#0" data-text="#sym inv(a; b; c; d)"><span class="cond">#sym inv</span>(a; b; c; d)</a> - inverse 2x2;<br />
+                <a href="#0" data-text="#sym eigen(4; -2; -2; 4)"><span class="cond">#sym eigen</span>(a; b; c; d)</a> - eigenvalues 2x2;<br />
+                <a href="#0" data-text="#sym transp(a; b; c; d)"><span class="cond">#sym transp</span>(a; b; c; d)</a> - transpose 2x2;<br />
+                <br />
+                <b>Block mode:</b> Use <span class="cond">#sym</span> alone to start a block, <span class="cond">#end sym</span> to close:<br />
+                <code>#sym<br />diff(x^2; x)<br />integrate(sin(x); x)<br />solve(x^2-4; x)<br />#end sym</code>
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_deq">+</span><b>Display Equations (#deq):</b><br />
+            <span id="list_deq" style="display: none;">
+                <a href="#0" data-text="#deq f(x) = x^2 + 3*x + 1"><span class="cond">#deq</span> expr = expr = expr</a> - display-only symbolic equations with double/triple equality. No computation performed.<br />
+                Example: <code>#deq K = E*I/L^3*[12; 6*L; -12; 6*L | 6*L; 4*L^2; -6*L; 2*L^2]</code>
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_func">+</span><b>User-Defined Functions (#function):</b><br />
+            <span id="list_func" style="display: none;">
+                <span class="cond">#function</span> Name(param1; param2) — defines a multi-line function<br />
+                <span class="cond">#end function</span> — closes the function definition<br />
+                The last line <code>Name = expr</code> defines the return value. Variables are isolated.<br />
+                Example:<br />
+                <code>#function FrameKe(E; A; L)<br />k = E*A/L<br />FrameKe = k*[1; -1 | -1; 1]<br />#end function<br />K = FrameKe(200000; 0.01; 3)</code>
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_python">+</span><b>Python Code Blocks (#python):</b><br />
+            <span id="list_python" style="display: none;">
+                <span class="cond">#python</span> ... <span class="cond">#end python</span> — execute Python code, output rendered with CalcpadCE template.<br />
+                Works with SymPy, NumPy, OpenSeesPy, and any Python library.<br />
+                Export variables: <code>print(f"CALCPAD:varname={value}")</code><br />
+                Example:<br />
+                <code>#python<br />from sympy import *<br />x = symbols('x')<br />print(f"diff(x^3) = {diff(x**3, x)}")<br />#end python</code>
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_maxima">+</span><b>Maxima CAS Blocks (#maxima):</b><br />
+            <span id="list_maxima" style="display: none;">
+                <span class="cond">#maxima</span> ... <span class="cond">#end maxima</span> — execute Maxima CAS code.<br />
+                Lines ending with <code>;</code> produce output. Lines ending with <code>$</code> are silent.<br />
+                Example:<br />
+                <code>#maxima<br />diff(x^2+3*x+1, x);<br />laplace(sin(t), t, s);<br />ode2('diff(y,x,2)+4*y=0, y, x);<br />#end maxima</code>
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_pip">+</span><b>Install Python Packages (#pip):</b><br />
+            <span id="list_pip" style="display: none;">
+                <a href="#0" data-text="#pip install numpy sympy"><span class="cond">#pip install</span> package1 package2</a> - install Python packages via pip.<br />
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_viz">+</span><b>Interactive FEM Visualization ($Fem2D, $Fem3D, $Chart, $Mesh):</b><br />
+            <span id="list_viz" style="display: none;">
+                <b>$Fem2D</b>{x_j; y_j; e_j; s_j; values @ options} — interactive 2D FEM mesh (Three.js);<br />
+                <b>$Fem3D</b>{x_j; y_j; z_j; e_j; values @ options} — interactive 3D FEM with rotation/zoom;<br />
+                <b>$Chart</b>{x1; y1; x2; y2 @ options} — interactive charts with customizable styling;<br />
+                <b>$Mesh</b>{x_j; y_j; e_j; s_j; f_j @ w=400} — SVG 2D mesh with supports and loads;<br />
+                <b>$MeshResults</b>{x_j; y_j; e_j; values @ w=400} — color-mapped results on mesh;<br />
+                Powered by calcpad-viz TypeScript library (Three.js).
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_units">+</span><b>Unit Operators Enhanced (& and | with Arrays):</b><br />
+            <span id="list_units" style="display: none;">
+                <b>Adimensionalization with arrays (&amp;):</b><br />
+                <code>u = lsolve(K; F) &amp; [cm; cm; rad]</code> — strips ALL units (to SI), computes, then stamps each element with specified unit.<br />
+                <code>K &amp; [tonf/m; tonf | tonf; tonf*m]</code> — matrix unit stamping per cell.<br />
+                <br />
+                <b>Conversion with arrays (|):</b><br />
+                <code>u | [cm; cm; rad]</code> — converts each element to specified unit (compatible units required).<br />
+                <code>K | [kN/m; kN | kN; kN*m]</code> — matrix per-cell conversion.<br />
+                <br />
+                The <code>&amp;</code> operator first adimensionalizes everything to SI base units, performs the operation, then multiplies by the target units.<br />
+                The <code>|</code> operator converts between compatible units without adimensionalizing.
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_matfuncs">+</span><b>New Matrix Functions:</b><br />
+            <span id="list_matfuncs" style="display: none;">
+                <b>lsolve</b>(K; F) — solve linear system Kx=F;<br />
+                <b>clsolve</b>(K; F) — complex linear solver;<br />
+                <b>slsolve</b>(K; F) — sparse linear solver;<br />
+                <b>smsolve</b>(K; F) — sparse matrix solver;<br />
+                <b>hprod</b>(A; B) — Hadamard product (element-wise);<br />
+                <b>fprod</b>(A; B) — Frobenius product (matrix inner product);<br />
+                <b>kprod</b>(A; B) — Kronecker product;<br />
+                <b>matrix_hp</b>, <b>diagonal_hp</b>, <b>column_hp</b> — high-precision variants;<br />
+                Vectors display vertically (column format) like standard math notation.
+            </span>
+        </li>
+        <li style="list-style-type: none;">
+            <span class="exp" id="btn_fem_lib">+</span><b>FEM Graphics Library (Include/FEM_Graphics.cpd):</b><br />
+            <span id="list_fem_lib" style="display: none;">
+                Macro library with SVG functions for FEM diagrams:<br />
+                <b>fem_rect$</b>, <b>fem_joint$</b>, <b>fem_nlabel$</b>, <b>fem_elabel$</b> — elements and labels;<br />
+                <b>fem_pin$</b>, <b>fem_fixed_h$</b>, <b>fem_fixed_v$</b>, <b>fem_roller$</b> — boundary conditions;<br />
+                <b>fem_qload$</b>, <b>fem_force$</b>, <b>fem_moment$</b> — loading;<br />
+                <b>fem_color$</b> — color mapping (blue→green→yellow→red gradient).
             </span>
         </li>
         <li style="list-style-type: none;">

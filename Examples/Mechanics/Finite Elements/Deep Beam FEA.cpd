@@ -74,31 +74,31 @@ k = W/l
 δ = 20
 H = h/l*W
 r = 0.02*k
+mg = 3*δ
 #show
-'<svg viewbox="'-δ/2' '-3*δ' 'W + 2*δ' 'H + 5*δ'" xmlns="http://www.w3.org/2000/svg" version="1.1" style="font-family: Segoe UI; font-size:8px; width:'W + δ'pt; height:'H + 5*δ'pt">
-'<style>.joint{fill:orangeRed;} .support{stroke:red; stroke-width:1; fill:lightpink;} .element{stroke:seaGreen; stroke-width:1; fill:lime; fill-opacity:0.1; stroke-opacity:0.5;} .struct{fill:yellow; fill-opacity:0.25;stroke:goldenRod; stroke-opacity:0.5;}</style>
-'<rect x="'0'" y="'0'" width="'W'" height="'H'" class="struct"/>
-'<rect x="'0'" y="'H'" width="'d*k'" height="'1.5*δ'" class="struct"/>
-'<rect x="'W - d*k'" y="'H'" width="'d*k'" height="'1.5*δ'" class="struct"/>
-'<rect x="'a*k'" y="'-1.5*δ'" width="'b*k'" height="'1.5*δ'" style="fill:cyan; fill-opacity:0.15; stroke:darkCyan; stroke-opacity:0.5;"/>
-'<text x="'(a + b/2)*k + r'" y="'-1.8*δ'" text-anchor="middle" style="font-size:11px;">q='q' kN/m</text>
+#svg W+2*δ H+5*δ+mg
+.rect δ mg+0 W H yellow 0.25 goldenRod 0.5
+.rect δ mg+H d*k 1.5*δ yellow 0.25 goldenRod 0.5
+.rect δ+W-d*k mg+H d*k 1.5*δ yellow 0.25 goldenRod 0.5
+.rect δ+a*k mg-1.5*δ b*k 1.5*δ cyan 0.15 darkCyan 0.5
+.text δ+(a+b/2)*k mg-1.8*δ "q=100_kN/m" 11 black middle
+#for i_q = 0 : 3
+	x = δ+(a+i_q*b/3)*k
+	.arrow x mg-1.5*δ x mg red 1.5
+#loop
+.arrow δ+(a+b)*k mg-1.5*δ δ+(a+b)*k mg red 1.5
 #for e = 1 : n_e
-	#hide
-	x = x_c.e*k
-	y = y_c.e*k
-	#show
-	'<text x="'x'" y="'H - y'" text-anchor="middle">'e'</text>
-	'<rect x="'x - l_1/2*k'" y="'H - y - h_1/2*k'" width="'l_1*k'" height="'h_1*k'" class="element" />
+	x = x_c.e*k+δ
+	y = H-y_c.e*k+mg
+	.rect x-l_1/2*k y-h_1/2*k l_1*k h_1*k lime 0.1 seaGreen 1
+	.text x y e 7 black middle
 #loop
 #for j = 1 : n_j
-	#hide
-	x = x_j.j*k
-	y = H - y_j.j*k
-	#show
-	'<circle cx="'x'" cy="'y'" r="'r'" class="joint" />
-	'<text x="'x + r'" y="'y - r'" text-anchor="start">'j'</text>
+	x = x_j.j*k+δ
+	y = H-y_j.j*k+mg
+	.circle x y r orangeRed
 #loop
-'</svg>
+#end svg
 #noc
 '<h3>Finite element formation</h3>
 '<p><b>Shape functions</b></p>
