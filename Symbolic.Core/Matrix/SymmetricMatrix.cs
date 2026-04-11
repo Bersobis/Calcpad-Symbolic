@@ -189,14 +189,35 @@ namespace Calcpad.Core
         {
             // Para matrices grandes: usar Eigen C++ dense solver
             if (_rowCount >= EigenThreshold && EigenInterop.IsAvailable())
-                return EigenDenseSolve(v);
+            {
+                try
+                {
+                    return EigenDenseSolve(v);
+                }
+                catch
+                {
+                    // Eigen falló (matriz casi singular o no-SPD).
+                    // Caer al path LDLT administrado — más robusto.
+                }
+            }
 
-            var U = GetCholesky() ??
-                throw Exceptions.MatrixNotPositiveDefinite();
+            // Try Cholesky first (fastest for SPD matrices)
+            var U = GetCholesky();
+            if (U is not null)
+            {
+                var x = new RealValue[_rowCount];
+                FwdAndBackSubst(U, v, x, true);
+                return new(x);
+            }
 
-            var x = new RealValue[_rowCount];
-            FwdAndBackSubst(U, v, x, true);
-            return new(x);
+            // Fallback to LDLT (robust: handles symmetric indefinite matrices
+            // like layered plates + Winkler springs with quasi-rigid modes).
+            var L = GetLDLT() ??
+                throw Exceptions.MatrixSingular();
+
+            var xs = new RealValue[_rowCount];
+            FwdAndBackSubst(L, v, xs);
+            return new(xs);
         }
 
         private Vector EigenDenseSolve(Vector v)
