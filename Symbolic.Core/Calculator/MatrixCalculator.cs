@@ -70,6 +70,11 @@ namespace Calcpad.Core
             { "fft", 36 },
             { "ift", 37 },
             { "lu", 38 },
+            { "mesh_hex8_nodes", 39 },
+            { "mesh_hex8_elems", 40 },
+            { "mesh_soil_specs", 41 },
+            { "mesh_soil_specs_rect", 42 },
+            { "cells", 43 },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
         internal static readonly FrozenDictionary<string, int> Function2Index =
@@ -165,6 +170,8 @@ namespace Calcpad.Core
         new Dictionary<string, int>()
         {
             { "submatrix", 0 },
+            { "fem_hex8", 1 },
+            { "fem_hex8_stress", 2 },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
         internal static readonly FrozenDictionary<string, int> MultiFunctionIndex =
@@ -225,6 +232,12 @@ namespace Calcpad.Core
                 ClrUnits,               // 35
                 Fft,                    // 36
                 Ift,                    // 37
+                Transpose,              // 38 — lu has special handling (LuIndex), this slot is unreachable
+                MeshHex8Nodes,          // 39
+                MeshHex8Elems,          // 40
+                MeshSoilSpecs,          // 41
+                MeshSoilSpecsRect,      // 42
+                Cells,                  // 43
             ];
 
             MatrixFunctions2 = [
@@ -301,7 +314,9 @@ namespace Calcpad.Core
             ];
 
             MatrixFunctions5 = [
-                Submatrix
+                Submatrix,              // 0
+                FemHex8,                // 1
+                FemHex8Stress,          // 2
             ];
 
             MatrixMultiFunctions = [
@@ -428,6 +443,9 @@ namespace Calcpad.Core
             Interpolations[index](a, b, c);
 
         private static DiagonalMatrix Identity(in IValue n) => new(IValue.AsInt(n), RealValue.One);
+
+        /// <summary>Create a cell array of n matrices (Matlab-style cells).</summary>
+        private static IValue Cells(in IValue n) => new MatrixArray(IValue.AsInt(n));
         private static UpperTriangularMatrix UpperTriangular(in IValue n) => new(IValue.AsInt(n));
         private static LowerTriangularMatrix LowerTriangular(in IValue n) => new(IValue.AsInt(n));
         private static SymmetricMatrix Symmetric(in IValue n) => new(IValue.AsInt(n));
@@ -510,10 +528,27 @@ namespace Calcpad.Core
 
         private static IValue SetUnits(in IValue v, in IValue unitsValue)
         {
-            if (unitsValue is not RealValue rvu || rvu.D != 1d || !rvu.IsUnit )
+            if (unitsValue is not RealValue rvu)
                 throw Exceptions.InvalidUnits(unitsValue.ToString());
 
-            var units = rvu.Units ?? throw Exceptions.InvalidUnits(unitsValue.ToString());
+            // Two valid forms:
+            //   1) setunits(x; <unit>)  — rvu.IsUnit == true, rvu.Units != null
+            //   2) setunits(x; 1)       — literal 1 means "make unitless"
+            //                            (rvu.IsUnit == false, rvu.Units == null, D == 1)
+            Unit units;
+            if (rvu.IsUnit && rvu.Units is not null && rvu.D == 1d)
+            {
+                units = rvu.Units;
+            }
+            else if (!rvu.IsUnit && rvu.Units is null && rvu.D == 1d)
+            {
+                // Strip units (alias for clrunits when used on a value with units)
+                return ClrUnits(v);
+            }
+            else
+            {
+                throw Exceptions.InvalidUnits(unitsValue.ToString());
+            }
 
             switch (v)
             {
@@ -575,8 +610,16 @@ namespace Calcpad.Core
         private static IValue CondInf(in IValue M) => IValue.AsMatrix(M).CondInf();
         private static IValue Det(in IValue M) => IValue.AsMatrix(M).Determinant();
         private static IValue Rank(in IValue M) => IValue.AsMatrix(M).Rank();
-        private static Matrix Transpose(in IValue M)
+        private static IValue Transpose(in IValue M)
         {
+            // If input is a Vector, return a Vector with IsRow flipped
+            if (M is Vector vec && vec is not HpVector)
+            {
+                var result = new Vector(vec.Values[..vec.Length]);
+                result.IsRow = !vec.IsRow;
+                return result;
+            }
+
             var m = IValue.AsMatrix(M);
             if (m is HpMatrix hp_m)
                 return hp_m.Transpose();
@@ -596,6 +639,7 @@ namespace Calcpad.Core
                 HpDiagonalMatrix hp_dm => hp_dm.EigenValues(n),
                 SymmetricMatrix sm => sm.EigenValues(n),
                 DiagonalMatrix dm => dm.EigenValues(n),
+                Matrix mg => TrySymEigenValues(mg, n),
                 _ => throw Exceptions.MatrixMustBeSymmetric()
             };
         }
@@ -609,6 +653,7 @@ namespace Calcpad.Core
                 HpDiagonalMatrix hp_dm => hp_dm.EigenVectors(n),
                 SymmetricMatrix sm => sm.EigenVectors(n),
                 DiagonalMatrix dm => dm.EigenVectors(n),
+                Matrix mg => TrySymEigenVectors(mg, n),
                 _ => throw Exceptions.MatrixMustBeSymmetric()
             };
         }
@@ -622,8 +667,51 @@ namespace Calcpad.Core
                 HpDiagonalMatrix hp_dm => hp_dm.Eigen(n),
                 SymmetricMatrix sm => sm.Eigen(n),
                 DiagonalMatrix dm => dm.Eigen(n),
+                Matrix mg => TrySymEigen(mg, n),
                 _ => throw Exceptions.MatrixMustBeSymmetric()
             };
+        }
+
+        /// <summary>Convert generic Matrix to SymmetricMatrix with tolerance, then compute eigenvalues.</summary>
+        private static Vector TrySymEigenValues(Matrix m, int n)
+        {
+            return MakeSymmetricCopy(m).EigenValues(n);
+        }
+
+        private static Matrix TrySymEigenVectors(Matrix m, int n)
+        {
+            return MakeSymmetricCopy(m).EigenVectors(n);
+        }
+
+        private static Matrix TrySymEigen(Matrix m, int n)
+        {
+            return MakeSymmetricCopy(m).Eigen(n);
+        }
+
+        /// <summary>
+        /// Build a SymmetricMatrix copy from a numerically symmetric generic Matrix.
+        /// Accepts small rounding asymmetries (tolerance 1e-8).
+        /// </summary>
+        private static SymmetricMatrix MakeSymmetricCopy(Matrix m)
+        {
+            int sz = m.RowCount;
+            if (sz != m.ColCount)
+                throw Exceptions.MatrixMustBeSymmetric();
+
+            var sym = new SymmetricMatrix(sz);
+            for (int i = 0; i < sz; i++)
+            {
+                for (int j = i; j < sz; j++)
+                {
+                    double a = m[i, j].D;
+                    double b = m[j, i].D;
+                    double scale = Math.Max(Math.Abs(a), Math.Abs(b)) + 1.0;
+                    if (Math.Abs(a - b) > 1e-8 * scale)
+                        throw Exceptions.MatrixMustBeSymmetric();
+                    sym[i, j] = new RealValue((a + b) / 2);
+                }
+            }
+            return sym;
         }
 
         internal static Matrix LUDecomposition(in IValue M, HpVector indexes)
@@ -644,8 +732,35 @@ namespace Calcpad.Core
                 HpDiagonalMatrix hp_dm => hp_dm.CholeskyDecomposition(),
                 SymmetricMatrix sm => sm.CholeskyDecomposition(),
                 DiagonalMatrix dm => dm.CholeskyDecomposition(),
-                _ => throw Exceptions.MatrixMustBeSymmetric()
+                _ => TryCholeskyFromGeneric(matrix)
             };
+        }
+
+        /// <summary>
+        /// Convert a generic Matrix to SymmetricMatrix if numerically symmetric,
+        /// then compute its Cholesky. Tolerant to small rounding errors.
+        /// </summary>
+        private static Matrix TryCholeskyFromGeneric(Matrix m)
+        {
+            int n = m.RowCount;
+            if (n != m.ColCount)
+                throw Exceptions.MatrixMustBeSymmetric();
+
+            var sym = new SymmetricMatrix(n);
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = i; j < n; j++)
+                {
+                    double a = m[i, j].D;
+                    double b = m[j, i].D;
+                    double scale = Math.Max(Math.Abs(a), Math.Abs(b)) + 1.0;
+                    if (Math.Abs(a - b) > 1e-8 * scale)
+                        throw Exceptions.MatrixMustBeSymmetric();
+                    // Use the average to minimize numerical asymmetry
+                    sym[i, j] = new RealValue((a + b) / 2);
+                }
+            }
+            return sym.CholeskyDecomposition();
         }
         private static Matrix Create(in IValue m, in IValue n) => new(IValue.AsInt(m), IValue.AsInt(n));
         private static DiagonalMatrix Diagonal(in IValue n, in IValue value) => new(IValue.AsInt(n), IValue.AsReal(value));
@@ -686,6 +801,14 @@ namespace Calcpad.Core
             if (a.RowCount != b.Length)
                 throw Exceptions.MatrixDimensions();
 
+            // Si K o b tienen unidades MIXTAS por posición (caso matriz de rigidez
+            // con DOFs mixtos: kN/m, kN, kN*m), el solver Gauss-Jordan interno no
+            // puede operar directamente. Resolvemos adimensionalizando a SI,
+            // resolvemos numéricamente, y estampamos las unidades derivadas al
+            // vector solución.
+            if (HasMixedUnitsMatrix(a) || HasMixedUnitsVector(b))
+                return LSolveWithMixedUnits(a, b);
+
             if (a is HpMatrix hp_a)
             {
                 if (b is HpVector hp_b)
@@ -694,6 +817,111 @@ namespace Calcpad.Core
                 throw Exceptions.MustBeHpVector(Exceptions.Items.Argument);
             }
             return a.LSolve(b);
+        }
+
+        // Detecta si una matriz tiene unidades distintas en alguna posición.
+        private static bool HasMixedUnitsMatrix(Matrix m)
+        {
+            Unit first = null;
+            bool seen = false;
+            for (int i = 0; i < m.RowCount; i++)
+            {
+                var row = m.Rows[i];
+                for (int j = 0; j < row.Size; j++)
+                {
+                    var u = row[j].Units;
+                    if (!seen) { first = u; seen = true; continue; }
+                    if (!UnitsEqual(first, u)) return true;
+                }
+            }
+            return false;
+        }
+
+        // Detecta si un vector tiene unidades distintas en alguna posición.
+        private static bool HasMixedUnitsVector(Vector v)
+        {
+            Unit first = null;
+            bool seen = false;
+            for (int i = 0; i < v.Length; i++)
+            {
+                var u = v[i].Units;
+                if (!seen) { first = u; seen = true; continue; }
+                if (!UnitsEqual(first, u)) return true;
+            }
+            return false;
+        }
+
+        private static bool UnitsEqual(Unit u1, Unit u2)
+        {
+            if (u1 is null && u2 is null) return true;
+            if (u1 is null || u2 is null) return false;
+            return u1.IsConsistent(u2) && u1.GetSIFactor() == u2.GetSIFactor();
+        }
+
+        // Resuelve K*u = b cuando K y/o b tienen unidades mixtas por posición.
+        // Estrategia:
+        //   1. Convertir cada elemento a su valor en SI (adimensionalizar).
+        //   2. Resolver el sistema numérico (sin unidades).
+        //   3. Determinar la unidad derivada de cada u[i] = unidad(b[0]) / unidad(K[0,i]).
+        //      El sistema es consistente dimensionalmente si K[k,i]*u[i] tiene las mismas
+        //      unidades que b[k] para todo k. Esto se asume para este shortcut.
+        //   4. Convertir el valor numérico SI del resultado a la unidad derivada y estampar.
+        private static Vector LSolveWithMixedUnits(Matrix a, Vector b)
+        {
+            int n = a.RowCount;
+            // 1) Construir matriz y vector numéricos en SI.
+            var aRows = new Vector[n];
+            for (int i = 0; i < n; i++)
+            {
+                var row = a.Rows[i];
+                var cells = new RealValue[row.Size];
+                for (int j = 0; j < row.Size; j++)
+                {
+                    var u = row[j].Units;
+                    var factor = (u is not null && !u.IsDimensionless) ? u.GetSIFactor() : 1d;
+                    cells[j] = new RealValue(row[j].D * factor);
+                }
+                aRows[i] = new Vector(cells);
+            }
+            var aSi = Matrix.CreateFromRows(aRows, a.ColCount);
+
+            var bCells = new RealValue[n];
+            for (int i = 0; i < n; i++)
+            {
+                var u = b[i].Units;
+                var factor = (u is not null && !u.IsDimensionless) ? u.GetSIFactor() : 1d;
+                bCells[i] = new RealValue(b[i].D * factor);
+            }
+            var bSi = new Vector(bCells);
+
+            // 2) Resolver numéricamente (sin unidades).
+            var uSi = aSi.LSolve(bSi);
+
+            // 3) Calcular la unidad derivada de u[i] = unidad(b[0]) / unidad(a[0,i]).
+            //    Si a[0,i] es adimensional, la unidad de u[i] = unidad(b[0]).
+            //    Si b[0] es adimensional, unidad(u[i]) = 1 / unidad(a[0,i]).
+            var resultCells = new RealValue[n];
+            var row0 = a.Rows[0];
+            var ub0 = b[0].Units;
+            for (int i = 0; i < n; i++)
+            {
+                var uAi = row0[i].Units;
+                Unit uResult = null;
+                if (ub0 is null && uAi is null)
+                    uResult = null;
+                else if (ub0 is null)
+                    uResult = uAi.Pow(-1f); // 1/unit
+                else if (uAi is null)
+                    uResult = ub0;
+                else
+                    uResult = ub0 / uAi;
+
+                // Convertir el valor SI al valor en la unidad derivada.
+                var siFactor = (uResult is not null && !uResult.IsDimensionless)
+                    ? uResult.GetSIFactor() : 1d;
+                resultCells[i] = new RealValue(uSi[i].D / siFactor, uResult);
+            }
+            return new Vector(resultCells);
         }
 
         private static Vector ClSolve(in IValue A, in IValue B)
@@ -910,6 +1138,101 @@ namespace Calcpad.Core
         }
 
         private static Matrix Submatrix(Matrix M, in IValue i1, in IValue j1, in IValue i2, in IValue j2) => M.Submatrix(IValue.AsInt(i1), IValue.AsInt(j1), IValue.AsInt(i2), IValue.AsInt(j2));
+
+        /// <summary>Generate hex8 box mesh nodes from parameter vector [Lx; Ly; Lz; nx; ny; nz; centered?].</summary>
+        private static Matrix MeshHex8Nodes(in IValue p) => FemSolver.GenerateNodesBox(IValue.AsVector(p));
+
+        /// <summary>Generate hex8 box mesh element connectivity from parameter vector [nx; ny; nz].</summary>
+        private static Matrix MeshHex8Elems(in IValue p) => FemSolver.GenerateElemsBox(IValue.AsVector(p));
+
+        /// <summary>Generate specs (loads+BCs) for standard soil box problem: [Lx; Ly; Lz; nx; ny; nz; centered; Pz].</summary>
+        private static Matrix MeshSoilSpecs(in IValue p) => FemSolver.GenerateSoilBoxSpecs(IValue.AsVector(p));
+
+        /// <summary>Generate specs for soil box with RECTANGULAR distributed load: [Lx;Ly;Lz;nx;ny;nz;centered;Rx;Ry;q].</summary>
+        private static Matrix MeshSoilSpecsRect(in IValue p) => FemSolver.GenerateSoilBoxSpecsRect(IValue.AsVector(p));
+
+        /// <summary>
+        /// Native FEM hex8 solver: solves Ku=F for a mesh of C3D8 elements using
+        /// sparse Cholesky (Eigen C++) with penalty-method BCs. Up to 30K elements in seconds.
+        ///
+        /// Signature: fem_hex8(nodes, elements, E, nu, specs)
+        ///   nodes:    Matrix Nx3 (x, y, z)
+        ///   elements: Matrix Mx8 (1-based node ids)
+        ///   E:        Young's modulus (scalar)
+        ///   nu:       Poisson ratio (scalar)
+        ///   specs:    Matrix Nspec x 5 with format:
+        ///               row[0] = 1  -> load:  [1, nodeId, fx, fy, fz]
+        ///               row[0] = 2  -> bc:    [2, dofIdx, fixedValue, 0, 0]
+        ///             Where dofIdx = 3*(nodeId-1)+direction (direction 1=x, 2=y, 3=z).
+        /// Returns: Vector u of length 3N (ux1, uy1, uz1, ux2, uy2, uz2, ...).
+        /// </summary>
+        private static Vector FemHex8(Matrix nodes, in IValue elementsVal, in IValue Eval, in IValue nuVal, in IValue specsVal)
+        {
+            var elements = IValue.AsMatrix(elementsVal);
+            var specs = IValue.AsMatrix(specsVal);
+            double E = IValue.AsReal(Eval).D;
+            double nu = IValue.AsReal(nuVal).D;
+
+            int nN = nodes.RowCount;
+            int ndof = 3 * nN;
+
+            // Split specs into loads matrix and bcs matrix
+            int nLoads = 0, nBcs = 0;
+            int nSpecs = specs.RowCount;
+            for (int i = 0; i < nSpecs; i++)
+            {
+                int type = (int)specs[i, 0].D;
+                if (type == 1) nLoads++;
+                else if (type == 2) nBcs++;
+            }
+
+            var loadsMat = new Matrix(nLoads, 4);
+            var bcsMat = new Matrix(nBcs, 2);
+            int li = 0, bi = 0;
+            for (int i = 0; i < nSpecs; i++)
+            {
+                int type = (int)specs[i, 0].D;
+                if (type == 1)
+                {
+                    loadsMat[li, 0] = specs[i, 1];  // nodeId
+                    loadsMat[li, 1] = specs[i, 2];  // fx
+                    loadsMat[li, 2] = specs[i, 3];  // fy
+                    loadsMat[li, 3] = specs[i, 4];  // fz
+                    li++;
+                }
+                else if (type == 2)
+                {
+                    bcsMat[bi, 0] = specs[i, 1];    // dofIdx
+                    bcsMat[bi, 1] = specs[i, 2];    // fixedValue
+                    bi++;
+                }
+            }
+
+            return FemSolver.SolveHex8(nodes, elements, E, nu, loadsMat, bcsMat);
+        }
+
+        /// <summary>
+        /// Compute nodal stress matrix from displacements.
+        ///
+        /// Signature: fem_hex8_stress(nodes, elems, E, nu, u)
+        ///   nodes: Matrix Nx3 (x,y,z)
+        ///   elems: Matrix Mx8 (1-based connectivity)
+        ///   E:     Young's modulus
+        ///   nu:    Poisson ratio
+        ///   u:     Vector 3N of displacements (ux1,uy1,uz1, ux2,...)
+        /// Returns: Matrix Nx6 with [S11, S22, S33, S12, S23, S13] per node.
+        ///   - col(result; 1) = S11 (sigma_xx)
+        ///   - col(result; 2) = S22 (sigma_yy)
+        ///   - col(result; 3) = S33 (sigma_zz) ← lo mas usado para bulbo de presiones
+        /// </summary>
+        private static Matrix FemHex8Stress(Matrix nodes, in IValue elementsVal, in IValue Eval, in IValue nuVal, in IValue uVal)
+        {
+            var elements = IValue.AsMatrix(elementsVal);
+            double E = IValue.AsReal(Eval).D;
+            double nu = IValue.AsReal(nuVal).D;
+            var u = IValue.AsVector(uVal);
+            return FemSolver.ComputeStressHex8(u, nodes, elements, E, nu);
+        }
         internal static Matrix JoinCols(IValue[] v)
         {
             var n = v.Length;

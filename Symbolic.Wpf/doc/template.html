@@ -17,6 +17,28 @@
             max-width: 190mm;
         }
 
+        .book {
+            margin: 0 auto;
+            padding: 15mm 20mm;
+            max-width: 160mm;
+            text-align: justify;
+            line-height: 160%;
+        }
+
+        .book h1, .book h2, .book h3 {
+            text-align: left;
+        }
+
+        .book .eq {
+            display: block;
+            text-align: center;
+            margin: 0.5em 0;
+        }
+
+        .book p.eqnum {
+            text-align: center;
+        }
+
         h1, h2, h3, h4, h5, h6, .errorHeader, .roundBox {
             font-family: 'Arial Nova', Helvetica, sans-serif;
             margin: 0.5em 0 0.5em 0;
@@ -35,6 +57,86 @@
             margin: 0.3em 0 0.3em 0;
             padding: 0;
             line-height: 150%;
+        }
+
+        p.eqnum {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .eqn {
+            font-family: 'Georgia Pro', 'Century Schoolbook', 'Times New Roman', Times, serif;
+            font-style: normal;
+            color: #333;
+            white-space: nowrap;
+            margin-left: 2em;
+        }
+
+        .col-inl, .col-blk {
+            display: flex;
+            align-items: baseline;
+            gap: 1em;
+            margin: 0.3em 0;
+            line-height: 150%;
+        }
+
+        /* Preserve leading and consecutive spaces inside line-tracked text
+           paragraphs (`'   x` should render as "   x", not collapsed to " x"). */
+        p.line {
+            white-space: pre-wrap;
+        }
+        /* But col-cell spans inside a #blk row should NOT inherit pre-wrap
+           — they have their own flex layout. */
+        .col-cell, .col-cell span {
+            white-space: normal;
+        }
+
+        .col-cell {
+            flex: 1;
+        }
+
+        .col-blk-wrap {
+            margin: 0.3em 0;
+        }
+
+        .cen-line {
+            text-align: center;
+        }
+
+        p.eqnum.cen-line {
+            justify-content: center;
+            gap: 2em;
+        }
+
+        .cen-blk {
+            margin: 0 auto;
+            padding: 5mm 15mm;
+            max-width: 165mm;
+            text-align: justify;
+            line-height: 160%;
+        }
+
+        .cen-blk h1, .cen-blk h2, .cen-blk h3, .cen-blk h4 {
+            text-align: left;
+        }
+
+        .cen-blk .eq {
+            display: block;
+            text-align: center;
+            margin: 0.5em 0;
+        }
+
+        .cen-blk p.eqnum {
+            text-align: center;
+        }
+
+        .cen-blk .col-inl, .cen-blk .col-blk {
+            justify-content: center;
+        }
+
+        .pgb {
+            page-break-before: always;
         }
 
         select, kbd {
@@ -203,6 +305,70 @@
         .matrix {
             display: inline-table;
         }
+
+        /* Paragraphs containing a cell-array: disable justify so there's no
+           giant gap between K_e = and the wrapped cell-array. */
+        p:has(.cell-array),
+        p:has(.cell-array) .eq {
+            text-align: left !important;
+            word-spacing: normal !important;
+        }
+
+        /* Cell array (MatrixArray) — outer [...] shaped with pseudo-elements
+           Keeps cell-array on SAME line as K_e = ... by using inline-block. */
+        .cell-array {
+            display: inline-block;
+            vertical-align: middle;
+            position: relative;
+            padding: 2pt 8pt;
+            margin: 0 1pt;
+            white-space: nowrap;
+        }
+
+        /* Left bracket [ — left side + top arm + bottom arm */
+        .cell-array::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 5pt;
+            border-left: solid 1.5pt black;
+            border-top: solid 1.5pt black;
+            border-bottom: solid 1.5pt black;
+        }
+
+        /* Right bracket ] — right side + top arm + bottom arm */
+        .cell-array::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: 0;
+            width: 5pt;
+            border-right: solid 1.5pt black;
+            border-top: solid 1.5pt black;
+            border-bottom: solid 1.5pt black;
+        }
+
+        /* Hide the literal [ ] text — pseudo-elements draw the brackets */
+        .cell-array .cell-bracket {
+            display: none;
+        }
+
+        /* Separators between matrices inside cell-array */
+        .cell-array .cell-sep {
+            display: inline-block;
+            width: 6pt;
+        }
+
+        /* Matrices inside cell-array: inline-block + middle align */
+        .cell-array .matrix {
+            display: inline-table;
+            vertical-align: middle;
+        }
+
+        /* Inner matrices keep their own brackets (so each looks like a matrix) */
 
             .matrix .tr {
                 display: table-row;
@@ -926,13 +1092,20 @@
                     }
                 });
 
-                $("a").click(function () {
-                    chrome.webview.postMessage('clicked');
-                });
+                // Guard chrome.webview: only exists when the HTML is hosted inside
+                // the WPF WebView2 viewer. When opened standalone in a browser,
+                // `chrome.webview` is undefined and the original unconditional calls
+                // would throw `Cannot read properties of undefined`. The guard makes
+                // the click/focus hooks silently no-op outside WPF.
+                if (typeof chrome !== 'undefined' && chrome.webview && chrome.webview.postMessage) {
+                    $("a").click(function () {
+                        chrome.webview.postMessage('clicked');
+                    });
 
-                window.addEventListener('click', () => {
-                    chrome.webview.postMessage('focused');
-                });
+                    window.addEventListener('click', () => {
+                        chrome.webview.postMessage('focused');
+                    });
+                }
             });
         }
         document.oncontextmenu = function () { contextMenu = true; };

@@ -605,10 +605,10 @@ namespace Calcpad.Core
 
             private static NewExpression ParseVectorToken(Expression[] values) =>
                 Expression.New(
-                    VectorConstructor, 
+                    VectorConstructor,
                     Expression.Call(
-                        ExpandRealValuesMethod, 
-                        Expression.NewArrayInit(typeof(IValue), 
+                        ExpandRealValuesMethod,
+                        Expression.NewArrayInit(typeof(IValue),
                         values)));
 
             private static MethodCallExpression ParseMatrixToken(Expression[] values) =>
