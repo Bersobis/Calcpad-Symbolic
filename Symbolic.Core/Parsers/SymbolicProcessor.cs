@@ -291,6 +291,12 @@ namespace Calcpad.Core
                     var mx = MaximaRunner.IntegrateDefinite(a[0], a[1], a[2], a[3]);
                     if (mx.ok) return new SymResult(label, mx.output);
                 }
+                // FriCAS/Axiom: el mismo integrador (Risch) que usa Mathcad.
+                if (AxiomRunner.IsAvailable())
+                {
+                    var ax = AxiomRunner.IntegrateDefinite(a[0], a[1], a[2], a[3]);
+                    if (ax.ok) return new SymResult(label, NormalizeAxiom(ax.output));
+                }
                 var defRes = SandboxRunner.Run(
                     new[] { "integrate_def", a[1], a[2], a[3] },
                     a[0]);
@@ -307,6 +313,13 @@ namespace Calcpad.Core
                     var mx = MaximaRunner.Integrate(a[0], a[1]);
                     if (mx.ok) rs = mx.output;
                     else fallbackErr = mx.output;
+                }
+                if (rs == null && AxiomRunner.IsAvailable())
+                {
+                    // FriCAS/Axiom: integrador fuerte (resuelve casos con erf, logs
+                    // complejos que AngouriMath no). Mismo motor que Mathcad.
+                    var ax = AxiomRunner.Integrate(a[0], a[1]);
+                    if (ax.ok) rs = NormalizeAxiom(ax.output);
                 }
                 if (rs == null)
                 {
@@ -325,6 +338,17 @@ namespace Calcpad.Core
                 if (!hasC) rs += " + C";
                 return new SymResult(label, rs);
             }
+        }
+
+        // Convierte la notación de FriCAS/Axiom a la de Calcpad:
+        //  - `log(` de FriCAS es logaritmo NATURAL → `ln(` en Calcpad
+        //  - `pi()` → `pi`  ·  `%e` → `e`  ·  espacios sobrantes
+        private static string NormalizeAxiom(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\blog\s*\(", "ln(");
+            s = s.Replace("pi()", "pi").Replace("%e", "e").Replace("%pi", "pi");
+            return s.Trim();
         }
 
         // Replace each diff(expr; var; n) call with its computed derivative so

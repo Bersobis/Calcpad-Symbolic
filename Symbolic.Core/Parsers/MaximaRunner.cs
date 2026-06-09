@@ -79,6 +79,63 @@ namespace Calcpad.Core
         internal static (bool ok, string output) IntegrateDefinite(string expression, string variable, string lo, string hi, int timeoutMs = DefaultTimeoutMs)
             => RunScript($"integrate({expression},{variable},{lo},{hi})", timeoutMs);
 
+        // ---- operaciones simbólicas ampliadas (usan el Maxima ya instalado) ----
+
+        // Derivada n-ésima.
+        internal static (bool ok, string output) Diff(string expression, string variable, int order = 1, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"diff({expression},{variable},{order})", timeoutMs);
+
+        // Resolver ecuación(es). `expr` puede ser "lhs=rhs" o una expresión (=0).
+        // Devuelve la lista de soluciones de Maxima, p.ej. [x=2,x=3].
+        internal static (bool ok, string output) Solve(string expression, string variable, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"solve([{expression}],[{variable}])", timeoutMs);
+
+        // Factorizar.
+        internal static (bool ok, string output) Factor(string expression, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"factor({expression})", timeoutMs);
+
+        // Expandir.
+        internal static (bool ok, string output) Expand(string expression, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"expand({expression})", timeoutMs);
+
+        // Simplificación pesada: racional + radicales + trig.
+        internal static (bool ok, string output) Simplify(string expression, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"fullratsimp(trigsimp(radcan({expression})))", timeoutMs);
+
+        // Límite. `point` puede ser un valor, "inf", "minf"; `dir` opcional "plus"/"minus".
+        internal static (bool ok, string output) Limit(string expression, string variable, string point, string dir = null, int timeoutMs = DefaultTimeoutMs)
+            => RunScript(string.IsNullOrEmpty(dir)
+                ? $"limit({expression},{variable},{point})"
+                : $"limit({expression},{variable},{point},{dir})", timeoutMs);
+
+        // Sumatoria en forma cerrada: Σ_{var=lo}^{hi} expr.
+        internal static (bool ok, string output) Sum(string expression, string variable, string lo, string hi, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"ev(sum({expression},{variable},{lo},{hi}),simpsum,nouns)", timeoutMs);
+
+        // Productoria en forma cerrada.
+        internal static (bool ok, string output) Product(string expression, string variable, string lo, string hi, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"ev(product({expression},{variable},{lo},{hi}),simpproduct,nouns)", timeoutMs);
+
+        // EDO general por ode2 (1er/2º orden). `eqn` en notación Maxima con 'diff,
+        // p.ej. "'diff(y,x,2)+a*'diff(y,x)+b*y=f(x)". dep=y, indep=x.
+        internal static (bool ok, string output) Ode2(string eqn, string dep, string indep, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"ode2({eqn},{dep},{indep})", timeoutMs);
+
+        // EDO con condiciones iniciales por desolve (transformada de Laplace).
+        // eqns y funcs en notación Maxima, p.ej. desolve('diff(y(x),x)=y(x), y(x)).
+        internal static (bool ok, string output) Desolve(string eqns, string funcs, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"desolve([{eqns}],[{funcs}])", timeoutMs);
+
+        // Transformada de Laplace y su inversa.
+        internal static (bool ok, string output) Laplace(string expression, string t, string s, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"laplace({expression},{t},{s})", timeoutMs);
+        internal static (bool ok, string output) InverseLaplace(string expression, string s, string t, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"ilt({expression},{s},{t})", timeoutMs);
+
+        // Escotilla general: ejecuta cualquier llamada Maxima (sin el ';' final).
+        internal static (bool ok, string output) Eval(string maximaCall, int timeoutMs = DefaultTimeoutMs)
+            => RunScript(maximaCall, timeoutMs);
+
         private static (bool ok, string output) RunScript(string maximaCall, int timeoutMs)
         {
             ResolveExe();
