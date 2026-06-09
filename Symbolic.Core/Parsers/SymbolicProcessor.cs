@@ -289,7 +289,7 @@ namespace Calcpad.Core
                 if (preferMaxima)
                 {
                     var mx = MaximaRunner.IntegrateDefinite(a[0], a[1], a[2], a[3]);
-                    if (mx.ok) return new SymResult(label, mx.output);
+                    if (mx.ok) return new SymResult(label, NormalizeAxiom(mx.output));
                 }
                 // FriCAS/Axiom: el mismo integrador (Risch) que usa Mathcad.
                 if (AxiomRunner.IsAvailable())
@@ -311,7 +311,7 @@ namespace Calcpad.Core
                 if (preferMaxima)
                 {
                     var mx = MaximaRunner.Integrate(a[0], a[1]);
-                    if (mx.ok) rs = mx.output;
+                    if (mx.ok) rs = NormalizeAxiom(mx.output);
                     else fallbackErr = mx.output;
                 }
                 if (rs == null && AxiomRunner.IsAvailable())
