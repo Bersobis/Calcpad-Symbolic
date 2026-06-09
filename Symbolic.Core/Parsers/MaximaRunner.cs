@@ -132,6 +132,18 @@ namespace Calcpad.Core
         internal static (bool ok, string output) InverseLaplace(string expression, string s, string t, int timeoutMs = DefaultTimeoutMs)
             => RunScript($"ilt({expression},{s},{t})", timeoutMs);
 
+        // Fracciones parciales (Mathcad: parfrac).
+        internal static (bool ok, string output) Partfrac(string expression, string variable, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"partfrac({expression},{variable})", timeoutMs);
+
+        // Coeficientes del polinomio en `variable`, de grado 0 al máximo → [c0,c1,...].
+        internal static (bool ok, string output) Coeffs(string expression, string variable, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"block([p:expand({expression})],makelist(coeff(p,{variable},i),i,0,hipow(p,{variable})))", timeoutMs);
+
+        // Recolectar términos respecto de `variable` (Mathcad: collect).
+        internal static (bool ok, string output) Collect(string expression, string variable, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"collectterms(expand({expression}),{variable})", timeoutMs);
+
         // Escotilla general: ejecuta cualquier llamada Maxima (sin el ';' final).
         internal static (bool ok, string output) Eval(string maximaCall, int timeoutMs = DefaultTimeoutMs)
             => RunScript(maximaCall, timeoutMs);

@@ -61,7 +61,9 @@ namespace Calcpad.Core
                 "ode" or "ode1" or "ode2" or
                 "strain" or "epsilon" or "stress" or "sigma" or
                 "voigt" or "invariants" or "inv_t" or
-                "dyadic" or "outer" => true,
+                "dyadic" or "outer" or
+                "sum" or "product" or "prod" or
+                "parfrac" or "partfrac" or "coeffs" or "coeff" or "collect" => true,
                 _ => false
             };
         }
@@ -138,6 +140,11 @@ namespace Calcpad.Core
                     "voigt" => Voigt(args),
                     "invariants" or "inv_t" => TensorInvariants(args),
                     "dyadic" or "outer" => Dyadic(args),
+                    "sum" => SumOp(args),
+                    "product" or "prod" => ProductOp(args),
+                    "parfrac" or "partfrac" => Parfrac(args),
+                    "coeffs" or "coeff" => Coeffs(args),
+                    "collect" => Collect(args),
                     _ => Expression(command.Trim())
                 };
             }
@@ -348,6 +355,9 @@ namespace Calcpad.Core
             if (string.IsNullOrEmpty(s)) return s;
             s = System.Text.RegularExpressions.Regex.Replace(s, @"\blog\s*\(", "ln(");
             s = s.Replace("pi()", "pi").Replace("%e", "e").Replace("%pi", "pi");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\bpi\b", "π");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\bminf\b", "-∞");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\binf\b", "∞");
             return s.Trim();
         }
 
@@ -492,6 +502,63 @@ namespace Calcpad.Core
         {
             if (a.Length < 1) return Err("eval(expr)");
             return new SymResult(a[0], TC(((Entity)a[0]).EvalNumerical()));
+        }
+
+        // ─── Operaciones de Mathcad agregadas (vía Maxima) ───────────────
+
+        // Muestra de límites: inf/minf → ∞/-∞
+        private static string Lim(string s) => s == "inf" ? "∞" : s == "minf" ? "-∞" : s;
+
+        // Σ en forma cerrada:  sum(expr; var; lo; hi)
+        private static SymResult SumOp(string[] a)
+        {
+            if (a.Length < 4) return Err("sum(expr; var; lo; hi)");
+            if (!MaximaRunner.IsAvailable()) return Err("sum requiere Maxima");
+            var mx = MaximaRunner.Sum(a[0], a[1], a[2], a[3]);
+            if (!mx.ok) return Err("sum: " + mx.output);
+            return new SymResult($"{TAG_NARY}∑|{a[1]}={a[2]}|{Lim(a[3])}|{a[0]}", NormalizeAxiom(mx.output));
+        }
+
+        // ∏ en forma cerrada:  product(expr; var; lo; hi)
+        private static SymResult ProductOp(string[] a)
+        {
+            if (a.Length < 4) return Err("product(expr; var; lo; hi)");
+            if (!MaximaRunner.IsAvailable()) return Err("product requiere Maxima");
+            var mx = MaximaRunner.Product(a[0], a[1], a[2], a[3]);
+            if (!mx.ok) return Err("product: " + mx.output);
+            return new SymResult($"{TAG_NARY}∏|{a[1]}={a[2]}|{Lim(a[3])}|{a[0]}", NormalizeAxiom(mx.output));
+        }
+
+        // Fracciones parciales:  parfrac(expr; var)
+        private static SymResult Parfrac(string[] a)
+        {
+            if (a.Length < 2) return Err("parfrac(expr; var)");
+            if (!MaximaRunner.IsAvailable()) return Err("parfrac requiere Maxima");
+            var mx = MaximaRunner.Partfrac(a[0], a[1]);
+            if (!mx.ok) return Err("parfrac: " + mx.output);
+            return new SymResult(a[0], NormalizeAxiom(mx.output));
+        }
+
+        // Coeficientes del polinomio:  coeffs(expr; var) → [c0; c1; ...]
+        private static SymResult Coeffs(string[] a)
+        {
+            if (a.Length < 2) return Err("coeffs(expr; var)");
+            if (!MaximaRunner.IsAvailable()) return Err("coeffs requiere Maxima");
+            var mx = MaximaRunner.Coeffs(a[0], a[1]);
+            if (!mx.ok) return Err("coeffs: " + mx.output);
+            // [1,2,3] → vector Calcpad [1; 2; 3]
+            var v = NormalizeAxiom(mx.output).Trim('[', ']').Replace(",", "; ");
+            return new SymResult(a[0], $"[{v}]");
+        }
+
+        // Recolectar términos:  collect(expr; var)
+        private static SymResult Collect(string[] a)
+        {
+            if (a.Length < 2) return Err("collect(expr; var)");
+            if (!MaximaRunner.IsAvailable()) return Err("collect requiere Maxima");
+            var mx = MaximaRunner.Collect(a[0], a[1]);
+            if (!mx.ok) return Err("collect: " + mx.output);
+            return new SymResult(a[0], NormalizeAxiom(mx.output));
         }
 
         private static SymResult Substitute(string[] a)
