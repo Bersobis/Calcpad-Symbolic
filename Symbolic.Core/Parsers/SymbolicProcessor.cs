@@ -63,7 +63,9 @@ namespace Calcpad.Core
                 "voigt" or "invariants" or "inv_t" or
                 "dyadic" or "outer" or
                 "sum" or "product" or "prod" or
-                "parfrac" or "partfrac" or "coeffs" or "coeff" or "collect" => true,
+                "parfrac" or "partfrac" or "coeffs" or "coeff" or "collect" or
+                "fourier" or "invfourier" or "ifourier" or
+                "combine" or "confrac" or "cf" or "assume" => true,
                 _ => false
             };
         }
@@ -145,6 +147,11 @@ namespace Calcpad.Core
                     "parfrac" or "partfrac" => Parfrac(args),
                     "coeffs" or "coeff" => Coeffs(args),
                     "collect" => Collect(args),
+                    "fourier" => FourierOp(args),
+                    "invfourier" or "ifourier" => InvFourierOp(args),
+                    "combine" => CombineOp(args),
+                    "confrac" or "cf" => Confrac(args),
+                    "assume" => Assume(args),
                     _ => Expression(command.Trim())
                 };
             }
@@ -449,19 +456,61 @@ namespace Calcpad.Core
         private static SymResult Solve(string[] a)
         {
             if (a.Length < 2) return Err("solve(expr; var)");
+
+            // Preferir Maxima: DESPEJA de fórmulas (A = π·r²  →  r = √(A/π)) y es
+            // mucho más robusto que AngouriMath para ecuaciones con parámetros.
+            if (MaximaRunner.IsAvailable())
+            {
+                var mx = MaximaRunner.Solve(ToMaxima(a[0]), a[1]);
+                if (mx.ok && mx.output.Contains('='))
+                {
+                    var inner = mx.output.Trim();
+                    if (inner.StartsWith("[")) inner = inner.Trim('[', ']');
+                    var solTag = $"{TAG_SOLVE}{a[1]}";
+                    foreach (var part in SplitTopComma(inner))
+                    {
+                        var eq = part.Trim();
+                        int ei = eq.IndexOf('=');
+                        solTag += "|" + NormalizeAxiom(ei >= 0 ? eq[(ei + 1)..].Trim() : eq);
+                    }
+                    // display: si la entrada es una ecuación "lhs = rhs", mostrarla así
+                    int di = a[0].IndexOf('=');
+                    return di >= 0
+                        ? new SymResult(a[0][..di].Trim(), a[0][(di + 1)..].Trim(), solTag)
+                        : new SymResult(a[0], "0", solTag);
+                }
+            }
+
+            // Fallback AngouriMath (forma expr = 0)
             Entity e = a[0];
             var v = Var(a[1]);
             var sol = e.SolveEquation(v);
-
-            // TAG_SOLVE: var|val1|val2|...
             var solStr = TC(sol);
             var vals = solStr.Trim('{', '}', ' ').Split(',');
-            var solTag = $"{TAG_SOLVE}{a[1]}";
+            var solTagAm = $"{TAG_SOLVE}{a[1]}";
             foreach (var val in vals)
-                solTag += "|" + val.Trim();
+                solTagAm += "|" + val.Trim();
+            return new SymResult(a[0], "0", solTagAm);
+        }
 
-            // 3 parts: expression = 0 → solution set
-            return new SymResult(a[0], "0", solTag);
+        // Convierte notación Calcpad → Maxima para enviar al solver (π→%pi).
+        private static string ToMaxima(string s)
+            => s.Replace("π", "%pi");
+
+        // Divide por comas de nivel superior (respeta paréntesis/corchetes).
+        private static System.Collections.Generic.List<string> SplitTopComma(string s)
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            int depth = 0, start = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c is '(' or '[') depth++;
+                else if (c is ')' or ']') depth--;
+                else if (c == ',' && depth == 0) { parts.Add(s[start..i]); start = i + 1; }
+            }
+            parts.Add(s[start..]);
+            return parts;
         }
 
         private static SymResult Limit(string[] a)
@@ -559,6 +608,57 @@ namespace Calcpad.Core
             var mx = MaximaRunner.Collect(a[0], a[1]);
             if (!mx.ok) return Err("collect: " + mx.output);
             return new SymResult(a[0], NormalizeAxiom(mx.output));
+        }
+
+        // Transformada de Fourier:  fourier(expr; t; w)  →  F(w)
+        private static SymResult FourierOp(string[] a)
+        {
+            if (a.Length < 3) return Err("fourier(expr; t; w)");
+            if (!MaximaRunner.IsAvailable()) return Err("fourier requiere Maxima");
+            var mx = MaximaRunner.Fourier(a[0], a[1], a[2]);
+            if (!mx.ok || mx.output.Contains("integrate")) return Err("fourier: no converge para esta f");
+            return new SymResult(a[0], NormalizeAxiom(mx.output));
+        }
+
+        // Transformada inversa de Fourier:  invfourier(expr; w; t)  →  f(t)
+        private static SymResult InvFourierOp(string[] a)
+        {
+            if (a.Length < 3) return Err("invfourier(expr; w; t)");
+            if (!MaximaRunner.IsAvailable()) return Err("invfourier requiere Maxima");
+            var mx = MaximaRunner.InvFourier(a[0], a[1], a[2]);
+            if (!mx.ok || mx.output.Contains("integrate")) return Err("invfourier: no converge");
+            return new SymResult(a[0], NormalizeAxiom(mx.output));
+        }
+
+        // Combinar sobre denominador común:  combine(expr)
+        private static SymResult CombineOp(string[] a)
+        {
+            if (a.Length < 1) return Err("combine(expr)");
+            if (!MaximaRunner.IsAvailable()) return Err("combine requiere Maxima");
+            var mx = MaximaRunner.Combine(a[0]);
+            if (!mx.ok) return Err("combine: " + mx.output);
+            return new SymResult(a[0], NormalizeAxiom(mx.output));
+        }
+
+        // Fracción continua de un número:  confrac(x)  →  [a0; a1; a2; ...]
+        private static SymResult Confrac(string[] a)
+        {
+            if (a.Length < 1) return Err("confrac(numero)");
+            if (!MaximaRunner.IsAvailable()) return Err("confrac requiere Maxima");
+            var mx = MaximaRunner.ContinuedFraction(a[0]);
+            if (!mx.ok) return Err("confrac: " + mx.output);
+            var v = NormalizeAxiom(mx.output).Trim('[', ']').Replace(",", "; ");
+            return new SymResult(a[0], $"[{v}]");
+        }
+
+        // Supuesto de dominio + simplificación:  assume(condicion; expr)
+        private static SymResult Assume(string[] a)
+        {
+            if (a.Length < 2) return Err("assume(condicion; expr)");
+            if (!MaximaRunner.IsAvailable()) return Err("assume requiere Maxima");
+            var mx = MaximaRunner.Eval($"assume({ToMaxima(a[0])})$fullratsimp(radcan({ToMaxima(a[1])}))");
+            if (!mx.ok) return Err("assume: " + mx.output);
+            return new SymResult(a[1], NormalizeAxiom(mx.output));
         }
 
         private static SymResult Substitute(string[] a)

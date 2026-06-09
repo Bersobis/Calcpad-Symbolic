@@ -144,6 +144,26 @@ namespace Calcpad.Core
         internal static (bool ok, string output) Collect(string expression, string variable, int timeoutMs = DefaultTimeoutMs)
             => RunScript($"collectterms(expand({expression}),{variable})", timeoutMs);
 
+        // Combinar términos sobre denominador común (Mathcad: combine).
+        internal static (bool ok, string output) Combine(string expression, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"combine({expression})", timeoutMs);
+
+        // Fracción continua de un número (Mathcad: confrac) → [a0,a1,a2,...].
+        internal static (bool ok, string output) ContinuedFraction(string expression, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"cf({expression})", timeoutMs);
+
+        // Transformada de Fourier continua: f(t) → F(w) = ∫ f·e^{-i w t} dt.
+        internal static (bool ok, string output) Fourier(string expression, string t, string w, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"assume({w}>0)$integrate(({expression})*%e^(-%i*{w}*{t}),{t},minf,inf)", timeoutMs);
+
+        // Transformada inversa de Fourier: F(w) → f(t) = (1/2π) ∫ F·e^{i w t} dw.
+        internal static (bool ok, string output) InvFourier(string expression, string w, string t, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"assume({t}>0)$(1/(2*%pi))*integrate(({expression})*%e^(%i*{w}*{t}),{w},minf,inf)", timeoutMs);
+
+        // Despejar/resolver con assumption opcional (para evitar preguntas interactivas).
+        internal static (bool ok, string output) SolveAssume(string equation, string variable, string assumption, int timeoutMs = DefaultTimeoutMs)
+            => RunScript($"assume({assumption})$solve([{equation}],[{variable}])", timeoutMs);
+
         // Escotilla general: ejecuta cualquier llamada Maxima (sin el ';' final).
         internal static (bool ok, string output) Eval(string maximaCall, int timeoutMs = DefaultTimeoutMs)
             => RunScript(maximaCall, timeoutMs);
