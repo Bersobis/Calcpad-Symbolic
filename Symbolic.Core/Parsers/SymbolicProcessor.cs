@@ -450,6 +450,12 @@ namespace Calcpad.Core
         private static SymResult Factor(string[] a)
         {
             if (a.Length < 1) return Err("factor(expr)");
+            // Maxima factoriza de verdad (AngouriMath suele devolver la entrada sin tocar).
+            if (MaximaRunner.IsAvailable())
+            {
+                var mx = MaximaRunner.Factor(ToMaxima(a[0]));
+                if (mx.ok && mx.output != a[0]) return new SymResult(a[0], NormalizeAxiom(mx.output));
+            }
             return new SymResult(a[0], TC(((Entity)a[0]).Factorize().Simplify()));
         }
 
