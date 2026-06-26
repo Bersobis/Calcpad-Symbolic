@@ -442,6 +442,15 @@ namespace Calcpad.Core
                     _ => a * bd
                 };
 
+            // === MKL: Full×Full grande → promover a HpMatrix (que usa Intel MKL via cblas_dgemm).
+            // La promocion lanza si las unidades por-elemento son inconsistentes → cae a managed. ===
+            if (BlasInterop.Available && a._type == MatrixType.Full && b._type == MatrixType.Full
+                && (a._rowCount >= BlasInterop.BlasThreshold || a._colCount >= BlasInterop.BlasThreshold || b._colCount >= BlasInterop.BlasThreshold))
+            {
+                try { return new HpMatrix(a) * new HpMatrix(b); }
+                catch (MathParserException) { /* unidades mixtas → seguir por el camino managed */ }
+            }
+
             Matrix c = new(a._rowCount, b._colCount);
             var m = a._rowCount;
             var na = a._colCount - 1;

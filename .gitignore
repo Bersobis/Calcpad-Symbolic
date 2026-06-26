@@ -1,5 +1,8 @@
 bin/
 obj/
+# Binarios nativos de calculo (Intel oneMKL ~388 MB): se bundlean en el instalador
+# via Symbolic.Core.csproj (<None Include="Native\mkl\*.dll">), NO en git.
+Symbolic.Core/Native/mkl/
 *.user
 *.suo
 .vs/

@@ -1073,7 +1073,9 @@ namespace Calcpad.Core
             if (a.RowCount != a.ColCount || b.RowCount != b.ColCount)
                 throw Exceptions.MatrixNotSquare();
 
-            return HpMatmulWinograd.Multiply(a, b);
+            // Via el operador '*': enruta por HpMatrix.operator* (que usa Intel MKL
+            // si esta disponible, o Winograd/SIMD managed como fallback).
+            return a * b;
         }
 
         private static HpMatrix Fft(in IValue A) => IValue.AsMatrixHp(A).FFT(false);

@@ -542,6 +542,48 @@ namespace Calcpad.Core
                 };
 
             var m = a._rowCount;
+            // === MKL/BLAS nativo (Intel oneMKL / OpenBLAS): Full×Full grande → cblas_dgemm ===
+            // Si no hay libreria nativa cargada (BlasInterop.Available == false) NO entra aqui
+            // y cae al camino Winograd/SIMD managed de siempre (cero regresion).
+            if (BlasInterop.Available && a._type == MatrixType.Full && b._type == MatrixType.Full)
+            {
+                var ka = a._colCount;
+                var nb2 = b._colCount;
+                if (m >= BlasInterop.BlasThreshold || ka >= BlasInterop.BlasThreshold || nb2 >= BlasInterop.BlasThreshold)
+                {
+                    var unitB = Unit.Multiply(a.Units, b.Units, out var dB, true);
+                    var af = new double[m * ka];
+                    var bf = new double[ka * nb2];
+                    var cf = new double[m * nb2];
+                    var aR = a._hpRows;
+                    var bR = b._hpRows;
+                    // OJO: HpVector es ragged → Raw solo guarda [0..Size); los indices >= Size
+                    // son 0 implicito. Leer mas alla de Size desborda el array.
+                    for (int i = 0; i < m; ++i)
+                    {
+                        var rv = aR[i]; var sz = rv.Size; if (sz == 0) continue;
+                        var r = rv.Raw; var o = i * ka;
+                        for (int j = 0; j < sz; ++j) af[o + j] = r[j];
+                    }
+                    for (int i = 0; i < ka; ++i)
+                    {
+                        var rv = bR[i]; var sz = rv.Size; if (sz == 0) continue;
+                        var r = rv.Raw; var o = i * nb2;
+                        for (int j = 0; j < sz; ++j) bf[o + j] = r[j];
+                    }
+                    BlasInterop.MatMul(m, ka, nb2, af, bf, cf);
+                    HpMatrix cB = new(m, nb2, unitB);
+                    var cBr = cB._hpRows;
+                    for (int i = 0; i < m; ++i)
+                    {
+                        var row = new double[nb2];
+                        Array.Copy(cf, i * nb2, row, 0, nb2);
+                        cBr[i] = new HpVector(row, unitB);
+                    }
+                    if (dB != 1d) cB.Scale(dB);
+                    return cB;
+                }
+            }
             if (m >= 10 && m == a._colCount && b._rowCount == b._colCount)
                 return HpMatmulWinograd.Multiply(a, b);
 
