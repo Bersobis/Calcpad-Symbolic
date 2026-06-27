@@ -298,7 +298,11 @@ namespace Calcpad.Wpf
             _wv2Warper = new WebView2Wrapper(WebViewer, $"{docPath}\\blank.html");
             _macroParser = new MacroParser
             {
-                Include = Include
+                Include = Include,
+                // Auto-embebe la libreria de graficas: figure3$/fill3$/patch$/... andan
+                // sin que el usuario escriba #include mlplot.cpd ni '<>. El #include sigue
+                // disponible para sus otros archivos.
+                AutoIncludeFiles = [$"{AppInfo.DocPath}\\mlplot.cpd"]
             };
             _insertManager = new(RichTextBox);
             _autoCompleteManager = new(RichTextBox, AutoCompleteListBox, Dispatcher, _insertManager);
@@ -720,7 +724,9 @@ namespace Calcpad.Wpf
             if (r == MessageBoxResult.Cancel)
                 return;
 
-            var s = ".cpd";
+            // Calcpad Symbolic defaults to its own `.cpds` format; legacy `.cpd`
+            // files are still listed in the filter and open normally.
+            var s = ".cpds";
             if (!string.IsNullOrWhiteSpace(CurrentFileName))
                 s = Path.GetExtension(CurrentFileName).ToLowerInvariant();
 
@@ -987,7 +993,9 @@ namespace Calcpad.Wpf
             if (!string.IsNullOrWhiteSpace(CurrentFileName))
                 s = Path.GetExtension(CurrentFileName).ToLowerInvariant();
             else
-                s = ContentRequiresCpds(InputText) ? ".cpds" : ".cpd";
+                // New documents default to the Symbolic `.cpds` format. The
+                // SaveAs filter still offers `.cpd` for backward compatibility.
+                s = ".cpds";
 
             var dlg = new SaveFileDialog
             {
@@ -1443,7 +1451,14 @@ namespace Calcpad.Wpf
                     FreezeOutputButtons(true);
                     try
                     {
-                        var delayScript = $"setTimeout(function(){{window.location.replace(\"{_htmlParsingUrl}\");}},1000);";
+                        // Store the timeout handle on window so we can cancel it if
+                        // the parse finishes BEFORE the 1000 ms delay. Otherwise the
+                        // setTimeout fires AFTER we've already navigated to the result
+                        // and replaces it with the "Please wait" page — locking the UI.
+                        var delayScript =
+                            $"window._cpParsingTimer=setTimeout(function(){{" +
+                            $"window.location.replace(\"{_htmlParsingUrl}\");" +
+                            $"window._cpParsingTimer=null;}},1000);";
                         await WebViewer.ExecuteScriptAsync(delayScript);
                     }
                     catch
@@ -1452,6 +1467,15 @@ namespace Calcpad.Wpf
                     }
                     void parse() => _parser.Parse(outputText);
                     await Task.Run(parse);
+                    // Cancel the deferred "Please wait" redirect if the parser
+                    // returned within the 1 s window. No-op when the timer
+                    // already fired (the parsing.html page won't have the var).
+                    try
+                    {
+                        await WebViewer.ExecuteScriptAsync(
+                            "if(window._cpParsingTimer){clearTimeout(window._cpParsingTimer);window._cpParsingTimer=null;}");
+                    }
+                    catch { /* WebView not ready — harmless */ }
                     if (!IsWebForm)
                     {
                         MenuWebForm.IsEnabled = true;

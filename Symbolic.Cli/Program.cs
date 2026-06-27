@@ -314,6 +314,9 @@ namespace Calcpad.Cli
                 }
             }
             i += 4;
+            // Soporta la extension actual de Calcpad-Symbolic ".cpds" (5 chars, no 4).
+            if (i < fileName.Length && fileName[i] == 's')
+                i += 1;
             var outFile = fileName[i..].Trim();
             var isSilent = outFile.EndsWith(" -s");
             if (isSilent)
@@ -354,7 +357,9 @@ namespace Calcpad.Cli
                 var code = CalcpadReader.Read(fileName);
                 var macroParser = new MacroParser
                 {
-                    Include = CalcpadReader.Include
+                    Include = CalcpadReader.Include,
+                    // Auto-embebe la libreria de graficas (figure3$/fill3$/...) sin #include.
+                    AutoIncludeFiles = [$"{AppPath}doc{_dirSeparator}mlplot.cpd"]
                 };
                 var hasMacroErrors = macroParser.Parse(code, out var unwrappedCode, null, 0, true);
                 string htmlResult;

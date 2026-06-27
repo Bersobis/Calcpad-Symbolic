@@ -85,6 +85,12 @@ namespace Calcpad.Core
         private static readonly Dictionary<string, Macro> Macros = new(StringComparer.Ordinal);
         public Func<string, Queue<string>, string> Include;
 
+        /// <summary>Rutas a librerias .cpd cuyas macros #def se auto-registran al inicio
+        /// de cada parseo de nivel superior (p.ej. doc\mlplot.cpd: figure3$/fill3$/...).
+        /// El usuario NO escribe #include para estas; #include sigue disponible para todo
+        /// lo demas. Si el archivo falta o falla, se ignora (libreria opcional).</summary>
+        public string[] AutoIncludeFiles;
+
         private static Keywords GetKeyword(ReadOnlySpan<char> s)
         {
             if (s.Length < 4)
@@ -109,6 +115,22 @@ namespace Calcpad.Core
                 Macros.Clear();
                 _lineNumbers.Clear();
                 _parsedLineNumber = 0;
+                // Auto-registrar librerias de macros (p.ej. doc\mlplot.cpd: figure3$/fill3$/...).
+                // Se registran sus #def en el diccionario estatico Macros usando un sb
+                // descartable y includeLine!=0 (NO re-limpia Macros, NO toca _lineNumbers ni
+                // la salida del usuario). Asi las funciones de graficas andan sin que el .cpd
+                // escriba #include ni '<> ; el #include normal sigue intacto para todo lo demas.
+                if (AutoIncludeFiles is not null && Include is not null)
+                {
+                    var discard = new StringBuilder();
+                    foreach (var autoFile in AutoIncludeFiles)
+                    {
+                        if (string.IsNullOrEmpty(autoFile) || !File.Exists(autoFile))
+                            continue;
+                        try { Parse(Include(autoFile, new Queue<string>()), out _, discard, 1, false); }
+                        catch { /* libreria opcional: si falla, seguir sin ella */ }
+                    }
+                }
             }
             var macroBuilder = new StringBuilder(1000);
             var macroName = string.Empty;
