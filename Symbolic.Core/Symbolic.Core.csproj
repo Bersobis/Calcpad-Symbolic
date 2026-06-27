@@ -35,6 +35,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- DLL nativa C++ (P/Invoke) del solver Eigen (autovalores/sparse) → se copia
+         AL LADO del .exe. REQUERIDA: sin ella el analisis modal/sparse no carga
+         (no tiene fallback como el mkl). Va al repo (13 MB). -->
+    <None Include="Native\eigen_solver.dll" Condition="Exists('Native\eigen_solver.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>eigen_solver.dll</Link>
+    </None>
     <!-- Runtime Intel oneMKL (redistribuible ISSL, ~388 MB) → se copia a {app}\mkl\.
          NO va a git (gitignored); BlasInterop.cs lo carga desde {app}\mkl en otras
          maquinas (la de Jorge usa el de FreeCAD como fallback). Mismo patron que Calcpad-Lab. -->
