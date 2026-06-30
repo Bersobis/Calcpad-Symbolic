@@ -4559,7 +4559,24 @@ namespace Calcpad.Core
                 maximaCmd ??= "maxima"; // PATH fallback
 
                 var tempFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "calcpad_maxima_" + Guid.NewGuid().ToString("N")[..8] + ".mac");
-                System.IO.File.WriteAllText(tempFile, "display2d:false$\n" + code, new System.Text.UTF8Encoding(false));
+                // display2d:false → 1-D infix output we can re-render as math.
+                // linel:100000 → never wrap long results across lines (eigenvalues,
+                // inverse matrices) so each value stays on a single output line.
+                System.IO.File.WriteAllText(tempFile, "display2d:false$\nlinel:100000$\n" + code, new System.Text.UTF8Encoding(false));
+
+                // Maxima --batch echoes each INPUT statement before its result.
+                // We only want the results (the source command is already visible
+                // in the editor, line-aligned). Build a set of the normalized input
+                // statements so we can drop their echoes from the output.
+                var inputEchoes = new HashSet<string>(StringComparer.Ordinal);
+                var statements = new List<string>();
+                foreach (var stmt in SplitTopLevelByChar(code, ';'))
+                {
+                    var st = stmt.Trim();
+                    if (st.Length == 0) continue;
+                    statements.Add(st);
+                    inputEchoes.Add(StripForEcho(st));
+                }
 
                 // Maxima interprets backslashes in the batch path as escape
                 // chars — force forward slashes.
@@ -4583,17 +4600,59 @@ namespace Calcpad.Core
 
                 if (!string.IsNullOrWhiteSpace(stdout))
                 {
-                    var lines = stdout.Split('\n');
-                    var isFirst = true;
-                    foreach (var line in lines)
+                    // Collect only the RESULT lines (drop batch/display2d/linel
+                    // noise, the .mac path echo, and the echoed input statements).
+                    var results = new List<string>();
+                    foreach (var line in stdout.Split('\n'))
                     {
                         var trimmed = line.TrimEnd('\r').Trim();
                         if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("batch") ||
-                            trimmed.StartsWith("read and") || trimmed.StartsWith("display2d"))
+                            trimmed.StartsWith("read and") || trimmed.StartsWith("display2d") ||
+                            trimmed.StartsWith("linel"))
                             continue;
+                        if (trimmed.StartsWith("\"") && trimmed.EndsWith(".mac\""))
+                            continue;
+                        if (inputEchoes.Contains(StripForEcho(trimmed)))
+                            continue;
+                        results.Add(trimmed);
+                    }
+
+                    // Our own list of input statements (in source order) so we can
+                    // show "input = result" with BOTH rendered as math. When the
+                    // result count matches we pair them; otherwise we fall back to
+                    // results-only (keeps output sane if Maxima emits extra lines).
+                    var pairInputs = results.Count == statements.Count;
+                    var isFirst = true;
+                    for (int i = 0; i < results.Count; i++)
+                    {
                         var lineId = isFirst ? HtmlIdForLine(_maximaBlockStartLine) : "";
                         isFirst = false;
-                        _sb.Append($"<p{lineId}><span class=\"eq\">{System.Web.HttpUtility.HtmlEncode(trimmed)}</span></p>\n");
+                        // eigenvalues(A) returns [[λ…],[mult…]] — show just the
+                        // eigenvalue vector (multiplicity noted only when ≠ 1) so the
+                        // "[1, 1]" row doesn't masquerade as part of a matrix.
+                        var resHtml = (pairInputs &&
+                                       statements[i].TrimStart().StartsWith("eigenvalues", StringComparison.OrdinalIgnoreCase))
+                            ? RenderEigenvaluesResult(results[i])
+                            : RenderMaximaLine(results[i]);
+                        string html;
+                        if (pairInputs)
+                        {
+                            var inHtml = RenderMaximaInput(statements[i]);
+                            // ODE solvers take an equation and return its solution,
+                            // so join with "⇒" (implies) to avoid a confusing chain
+                            // of "=" (e.g. "dy/dx + y = 0 ⇒ y = e⁻ˣ·c").
+                            var st = statements[i].TrimStart();
+                            var sep = (st.StartsWith("ode2", StringComparison.OrdinalIgnoreCase) ||
+                                       st.StartsWith("desolve", StringComparison.OrdinalIgnoreCase) ||
+                                       st.StartsWith("solve", StringComparison.OrdinalIgnoreCase))
+                                ? "⇒" : "=";
+                            html = string.IsNullOrEmpty(inHtml)
+                                ? resHtml
+                                : $"{inHtml} <span class=\"o\">{sep}</span> {resHtml}";
+                        }
+                        else
+                            html = resHtml;
+                        _sb.Append($"<p{lineId}><span class=\"eq\">{html}</span></p>\n");
                     }
                 }
             }
@@ -4601,6 +4660,440 @@ namespace Calcpad.Core
             {
                 _sb.Append($"<p{HtmlId}{HtmlLineClass}><span class=\"err\">Maxima error: {System.Web.HttpUtility.HtmlEncode(ex.Message)}</span></p>\n");
             }
+        }
+
+        // Render a Maxima INPUT statement as math, at the same quality as the
+        // result. Common calculus ops (diff/integrate) get textbook notation
+        // (d/dx, ∫ … dx); everything else renders as name(arg₁, arg₂, …) with
+        // each argument run through Calcpad's math renderer.
+        private string RenderMaximaInput(string stmt)
+        {
+            stmt = (stmt ?? string.Empty).Trim();
+            if (stmt.Length == 0) return string.Empty;
+
+            // Normalize Maxima constants/symbols (%pi→π, Greek names→symbols, …).
+            stmt = NormalizeMaxima(stmt);
+            // Drop Maxima's quote operator (noun form, e.g. 'diff) — display only.
+            stmt = stmt.Replace("'", "");
+
+            // Assignment "A : value" → show just the name (value is the result).
+            var colon = TopLevelIndexOf(stmt, ':');
+            if (colon > 0)
+                return SymRenderExpr(stmt[..colon].Trim());
+
+            // funcname( args ) — only when the part before '(' is a bare identifier
+            // (so an expression like "A - λ·ident(2)" renders as math, not a call).
+            var open = stmt.IndexOf('(');
+            if (open > 0 && stmt.EndsWith(")") && IsBareIdentifier(stmt[..open].Trim()))
+            {
+                var name = stmt[..open].Trim();
+                var args = SplitTopLevelByChar(stmt[(open + 1)..^1], ',')
+                    .Select(a => a.Trim()).ToList();
+
+                if (name.Equals("diff", StringComparison.OrdinalIgnoreCase) && args.Count >= 2)
+                    return RenderDiffCall(args);
+                if (name.Equals("integrate", StringComparison.OrdinalIgnoreCase) && args.Count >= 2)
+                {
+                    var f = SymRenderExpr(args[0]);
+                    var x = SymRenderExpr(args[1]);
+                    if (args.Count >= 4)
+                    {
+                        var a = SymRenderExpr(args[2]);
+                        var b = SymRenderExpr(args[3]);
+                        return $"<span class=\"r\">∫</span><sub>{a}</sub><sup>{b}</sup>&hairsp;{f}&hairsp;d{x}";
+                    }
+                    return $"<span class=\"r\">∫</span>&hairsp;{f}&hairsp;d{x}";
+                }
+                // determinant(...) → vertical-bar notation. If the argument is a
+                // matrix literal, draw the WHOLE matrix between tall vertical bars
+                // (textbook |…| with the entries inside); otherwise |A − λ·I|.
+                if (name.Equals("determinant", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                {
+                    var a0 = args[0].Trim();
+                    if (a0.StartsWith("matrix(", StringComparison.OrdinalIgnoreCase) && a0.EndsWith(")"))
+                    {
+                        var rws = SplitTopLevelByChar(a0[7..^1], ',');
+                        var rows = new List<List<string>>();
+                        foreach (var r in rws)
+                        {
+                            var rt = r.Trim();
+                            if (rt.StartsWith("[") && rt.EndsWith("]")) rt = rt[1..^1];
+                            rows.Add(SplitTopLevelByChar(rt, ',').Select(x => x.Trim()).ToList());
+                        }
+                        return BuildVbarMatrix(rows);
+                    }
+                    return $"|&hairsp;{RenderMaximaValue(a0)}&hairsp;|";
+                }
+                // solve(expr, x) → "expr = 0" (a bare expression means "= 0");
+                // solve([eqs], [vars]) → the system as-is. Caller joins with "⇒".
+                if (name.Equals("solve", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                {
+                    var a0 = args[0].Trim();
+                    var inner = RenderMaximaValue(a0);
+                    if (!a0.StartsWith("[") && TopLevelIndexOf(a0, '=') < 0)
+                        inner += " <span class=\"o\">=</span> 0";
+                    return inner;
+                }
+                // invert(A) → A⁻¹
+                if (name.Equals("invert", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                    return $"{RenderMaximaValue(args[0])}<sup>−1</sup>";
+                // transpose(A) → Aᵀ
+                if (name.Equals("transpose", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                    return $"{RenderMaximaValue(args[0])}<sup>T</sup>";
+                // laplace(f,t,s) → ℒ{ f } ; ilt(F,s,t) → ℒ⁻¹{ F }
+                if (name.Equals("laplace", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                    return $"ℒ&hairsp;{{&hairsp;{RenderMaximaValue(args[0])}&hairsp;}}";
+                if (name.Equals("ilt", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                    return $"ℒ<sup>−1</sup>&hairsp;{{&hairsp;{RenderMaximaValue(args[0])}&hairsp;}}";
+                // limit(f,x,p) → lim (x→p) f
+                if (name.Equals("limit", StringComparison.OrdinalIgnoreCase) && args.Count >= 3)
+                    return $"<span style=\"font-style:normal\">lim</span><sub>{SymRenderExpr(args[1])}→{SymRenderExpr(args[2])}</sub>&hairsp;{RenderMaximaValue(args[0])}";
+                // abs(x) → |x|
+                if (name.Equals("abs", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                    return $"|&hairsp;{RenderMaximaValue(args[0])}&hairsp;|";
+                // eigenvalues(A) → λ followed by the matrix in vertical bars
+                // (λ|…|); for a bare name, λ(A).
+                if (name.Equals("eigenvalues", StringComparison.OrdinalIgnoreCase) && args.Count >= 1)
+                {
+                    var a0 = args[0].Trim();
+                    if (a0.StartsWith("matrix(", StringComparison.OrdinalIgnoreCase) && a0.EndsWith(")"))
+                    {
+                        var rws = SplitTopLevelByChar(a0[7..^1], ',');
+                        var rows = new List<List<string>>();
+                        foreach (var r in rws)
+                        {
+                            var rt = r.Trim();
+                            if (rt.StartsWith("[") && rt.EndsWith("]")) rt = rt[1..^1];
+                            rows.Add(SplitTopLevelByChar(rt, ',').Select(x => x.Trim()).ToList());
+                        }
+                        return $"λ&hairsp;{BuildVbarMatrix(rows)}";
+                    }
+                    return $"λ&hairsp;(&hairsp;{RenderMaximaValue(a0)}&hairsp;)";
+                }
+
+                // Everything else (solve, factor, expand, taylor, simplify, …) has
+                // no standard symbol — DON'T print the command word. These all act
+                // on their first argument (the expression of interest), so render
+                // just that; the caller appends " = <result>", giving e.g.
+                // "sin(x) = x − x³/6 + …" instead of "taylor(sin(x), …) = …".
+                return RenderMaximaValue(args[0]);
+            }
+
+            // Not a function call → render straight as an expression.
+            return RenderMaximaValue(stmt);
+        }
+
+        // Render a Maxima diff(...) call as a derivative operator.
+        //   diff(f, x)          → d/dx (f)  or  ∂/∂x (f)
+        //   diff(f, x, n)       → dⁿ/dxⁿ (f)
+        //   diff(f, x,a, y,b, …)→ ∂ᵏ/∂xᵃ∂yᵇ … (f)   (mixed partial)
+        // Ordinary (d) vs partial (∂) is decided by the operand: partial when it
+        // contains BOTH the differentiation variable and another variable (e.g.
+        // diff(x²·y, x) → ∂), ordinary otherwise (e.g. diff(y, x) → d, an ODE).
+        private string RenderDiffCall(List<string> args)
+        {
+            var f = SymRenderExpr(args[0]);
+
+            // Mixed partial: diff(f, x, a, y, b, …)
+            if (args.Count >= 5 && (args.Count - 1) % 2 == 0)
+            {
+                int total = 0;
+                var denMix = new System.Text.StringBuilder();
+                for (int k = 1; k + 1 < args.Count; k += 2)
+                {
+                    var v = SymRenderExpr(args[k]);
+                    var o = args[k + 1].Trim();
+                    total += int.TryParse(o, out var oi) ? oi : 1;
+                    denMix.Append('∂').Append(v);
+                    if (o != "1") denMix.Append($"<sup>{System.Web.HttpUtility.HtmlEncode(o)}</sup>");
+                }
+                var numMix = total == 1 ? "∂" : $"∂<sup>{total}</sup>";
+                return $"<span class=\"dvc\">{numMix}<span class=\"dvl\"></span>{denMix}</span>&hairsp;(&hairsp;{f}&hairsp;)";
+            }
+
+            var xVar = args[1].Trim();
+            var x = SymRenderExpr(xVar);
+            var ord = args.Count >= 3 ? args[2].Trim() : "1";
+            var vars = ExtractVariableNames(args[0])
+                .Where(v => v != "e" && v != "π" && v != "i").Distinct().ToList();
+            var partial = vars.Contains(xVar) && vars.Any(v => v != xVar);
+            var ds = partial ? "∂" : "d";
+            var num = ord == "1" ? ds : $"{ds}<sup>{System.Web.HttpUtility.HtmlEncode(ord)}</sup>";
+            var den = ord == "1" ? $"{ds}{x}" : $"{ds}{x}<sup>{System.Web.HttpUtility.HtmlEncode(ord)}</sup>";
+            return $"<span class=\"dvc\">{num}<span class=\"dvl\"></span>{den}</span>&hairsp;(&hairsp;{f}&hairsp;)";
+        }
+
+        // Like SymRenderExpr but first renders any embedded diff(...) calls as
+        // derivative operators (so ODEs like "diff(y,x)+y = 0" show dy/dx, not the
+        // literal text). Each diff(...) is swapped for a placeholder identifier,
+        // the skeleton is rendered, then the placeholders are filled back in.
+        private string SymRenderExprD(string expr)
+        {
+            // Maxima constants like k1, k2, c2 read better as subscripts k₁, k₂.
+            // (Operand only — function names like ode2 are handled before this.)
+            expr = ConvertDigitSuffixToSubscript(expr);
+
+            if (string.IsNullOrEmpty(expr) || IndexOfDiff(expr, 0) < 0)
+                return SymRenderExpr(expr);
+
+            var derivs = new List<string>();
+            var work = new System.Text.StringBuilder();
+            int i = 0;
+            while (i < expr.Length)
+            {
+                if (i == IndexOfDiff(expr, i))
+                {
+                    var paren = expr.IndexOf('(', i);
+                    var close = MatchParen(expr, paren);
+                    if (paren > 0 && close > paren)
+                    {
+                        var dargs = SplitTopLevelByChar(expr.Substring(paren + 1, close - paren - 1), ',')
+                            .Select(a => a.Trim()).ToList();
+                        work.Append("Qdrv").Append((char)('a' + derivs.Count % 26));
+                        derivs.Add(dargs.Count >= 2 ? RenderDiffCall(dargs)
+                                                    : SymRenderExpr(expr.Substring(i, close - i + 1)));
+                        i = close + 1;
+                        continue;
+                    }
+                }
+                work.Append(expr[i]);
+                i++;
+            }
+            var html = SymRenderExpr(work.ToString());
+            for (int k = 0; k < derivs.Count; k++)
+                html = html.Replace($"<var>Qdrv{(char)('a' + k % 26)}</var>", derivs[k]);
+            return html;
+        }
+
+        // First index of a `diff(` token (word-boundary, paren follows) at/after `from`.
+        private static int IndexOfDiff(string s, int from)
+        {
+            for (int i = Math.Max(0, from); i + 4 < s.Length; i++)
+            {
+                if (string.Compare(s, i, "diff", 0, 4, StringComparison.OrdinalIgnoreCase) != 0) continue;
+                if (i > 0 && (char.IsLetterOrDigit(s[i - 1]) || s[i - 1] == '_')) continue;
+                int j = i + 4;
+                while (j < s.Length && s[j] == ' ') j++;
+                if (j < s.Length && s[j] == '(') return i;
+            }
+            return -1;
+        }
+
+        // Index of the ')' matching the '(' at `open`, else -1.
+        private static int MatchParen(string s, int open)
+        {
+            if (open < 0 || open >= s.Length || s[open] != '(') return -1;
+            int d = 0;
+            for (int i = open; i < s.Length; i++)
+            {
+                if (s[i] == '(') d++;
+                else if (s[i] == ')') { d--; if (d == 0) return i; }
+            }
+            return -1;
+        }
+
+        // Render one line of Maxima output (an expression, equation, list or
+        // matrix in 1-D infix) as Calcpad HTML math. Handles a leading
+        // assignment "A : <value>" or "A = <value>" by rendering "A = <value>".
+        private string RenderMaximaLine(string s)
+        {
+            s = (s ?? string.Empty).Trim();
+            if (s.Length == 0) return "&nbsp;";
+
+            // Normalize Maxima constants/symbols (%pi→π, Greek names→symbols, …).
+            s = NormalizeMaxima(s);
+
+            // Optional left-hand side: Maxima "A : expr" or an equation "A = expr".
+            var colon = TopLevelIndexOf(s, ':');
+            if (colon > 0)
+                return $"{SymRenderExpr(s[..colon].Trim())} = {RenderMaximaValue(s[(colon + 1)..].Trim())}";
+
+            return RenderMaximaValue(s);
+        }
+
+        // Render a Maxima value: matrix(...), list/vector [...], equation a=b,
+        // or a plain scalar expression.
+        private string RenderMaximaValue(string s)
+        {
+            s = (s ?? string.Empty).Trim();
+            if (s.Length == 0) return "&nbsp;";
+
+            // matrix([a,b],[c,d]) → Calcpad matrix literal [a,b | c,d].
+            if (s.StartsWith("matrix(", StringComparison.OrdinalIgnoreCase) && s.EndsWith(")"))
+            {
+                var inner = s[7..^1];
+                var rows = SplitTopLevelByChar(inner, ',');
+                var calcRows = new List<string>();
+                foreach (var r in rows)
+                {
+                    var rt = r.Trim();
+                    if (rt.StartsWith("[") && rt.EndsWith("]")) rt = rt[1..^1];
+                    calcRows.Add(rt);
+                }
+                var literal = "[" + string.Join(" | ", calcRows) + "]";
+                var matHtml = TryRenderMatrixLiteral(literal);
+                if (!string.IsNullOrEmpty(matHtml)) return matHtml;
+            }
+
+            // List/vector [ e1, e2, ... ] (solution sets, eigenvalues) → render as a
+            // real bracketed vector/matrix. Nested lists [[…],[…]] become matrix
+            // rows; a flat list becomes a column vector (one element per row).
+            if (s.Length >= 2 && s[0] == '[' && s[^1] == ']')
+            {
+                var parts = SplitTopLevelByChar(s[1..^1], ',')
+                    .Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
+                if (parts.Count == 0) return "[ ]";
+
+                var rows = new List<List<string>>();
+                bool nested = parts.All(p => p.Length >= 2 && p[0] == '[' && p[^1] == ']');
+                if (nested)
+                    foreach (var p in parts)
+                        rows.Add(SplitTopLevelByChar(p[1..^1], ',').Select(c => c.Trim()).ToList());
+                else
+                    foreach (var p in parts)              // flat → column vector
+                        rows.Add(new List<string> { p });
+
+                return BuildMaximaMatrix(rows);
+            }
+
+            // Equation "lhs = rhs".
+            var eq = TopLevelIndexOf(s, '=');
+            if (eq > 0)
+                return $"{SymRenderExprD(s[..eq].Trim())} = {SymRenderExprD(s[(eq + 1)..].Trim())}";
+
+            return SymRenderExprD(s);
+        }
+
+        // Maxima eigenvalues(A) = [[λ1,λ2,…],[m1,m2,…]] (values + multiplicities).
+        // Render as a 2-column table: each row is [ eigenvalue , multiplicity ].
+        private string RenderEigenvaluesResult(string res)
+        {
+            res = NormalizeMaxima((res ?? string.Empty).Trim());
+            if (res.Length >= 2 && res[0] == '[' && res[^1] == ']')
+            {
+                var outer = SplitTopLevelByChar(res[1..^1], ',').Select(p => p.Trim()).ToList();
+                if (outer.Count == 2 &&
+                    outer[0].StartsWith("[") && outer[0].EndsWith("]") &&
+                    outer[1].StartsWith("[") && outer[1].EndsWith("]"))
+                {
+                    var vals = SplitTopLevelByChar(outer[0][1..^1], ',').Select(c => c.Trim()).ToList();
+                    var mult = SplitTopLevelByChar(outer[1][1..^1], ',').Select(c => c.Trim()).ToList();
+                    var rows = new List<List<string>>();
+                    for (int k = 0; k < vals.Count; k++)
+                        rows.Add(new List<string> { vals[k], k < mult.Count ? mult[k] : "1" });
+                    return BuildMaximaMatrix(rows);   // 2 cols: value | multiplicity
+                }
+            }
+            return RenderMaximaLine(res);
+        }
+
+        // Build a matrix flanked by tall VERTICAL BARS (determinant notation |…|),
+        // with the entries inside — as a textbook writes a determinant.
+        private string BuildVbarMatrix(List<List<string>> rows)
+        {
+            int maxCols = 0;
+            foreach (var r in rows) if (r.Count > maxCols) maxCols = r.Count;
+            if (maxCols == 0) return "|&hairsp;|";
+            var sb = new System.Text.StringBuilder();
+            sb.Append("<span style=\"display:inline-table;border-left:1.6px solid currentColor;border-right:1.6px solid currentColor;padding:1px 7px;vertical-align:middle;\">");
+            foreach (var row in rows)
+            {
+                sb.Append("<span style=\"display:table-row\">");
+                for (int c = 0; c < maxCols; c++)
+                {
+                    sb.Append("<span style=\"display:table-cell;text-align:center;padding:1px 8px\">");
+                    sb.Append(c < row.Count ? RenderMaximaValue(row[c]) : string.Empty);
+                    sb.Append("</span>");
+                }
+                sb.Append("</span>");
+            }
+            sb.Append("</span>");
+            return sb.ToString();
+        }
+
+        // Build a tall-bracket matrix/vector from rows of Maxima cell expressions,
+        // using the same <span class="matrix"> structure as native Calcpad matrices.
+        private string BuildMaximaMatrix(List<List<string>> rows)
+        {
+            int maxCols = 0;
+            foreach (var r in rows) if (r.Count > maxCols) maxCols = r.Count;
+            if (maxCols == 0) return "[ ]";
+            var sb = new System.Text.StringBuilder();
+            sb.Append("<span class=\"matrix matwrap\">");
+            foreach (var row in rows)
+            {
+                sb.Append("<span class=\"tr\"><span class=\"td\"></span>");
+                for (int c = 0; c < maxCols; c++)
+                {
+                    sb.Append("<span class=\"td\">");
+                    sb.Append(c < row.Count ? RenderMaximaValue(row[c]) : "&nbsp;");
+                    sb.Append("</span>");
+                }
+                sb.Append("<span class=\"td\"></span></span>");
+            }
+            sb.Append("</span>");
+            return sb.ToString();
+        }
+
+        private static readonly Dictionary<string, string> _greek = new(StringComparer.Ordinal)
+        {
+            {"alpha","α"},{"beta","β"},{"gamma","γ"},{"delta","δ"},{"epsilon","ε"},
+            {"zeta","ζ"},{"eta","η"},{"theta","θ"},{"iota","ι"},{"kappa","κ"},
+            {"lambda","λ"},{"mu","μ"},{"nu","ν"},{"xi","ξ"},{"rho","ρ"},
+            {"sigma","σ"},{"tau","τ"},{"phi","φ"},{"chi","χ"},{"psi","ψ"},{"omega","ω"},
+            {"Gamma","Γ"},{"Delta","Δ"},{"Theta","Θ"},{"Lambda","Λ"},{"Xi","Ξ"},
+            {"Sigma","Σ"},{"Phi","Φ"},{"Psi","Ψ"},{"Omega","Ω"},
+        };
+
+        // Normalize Maxima output: %pi→π, %e/%i/%c→e/i/c, Greek letter NAMES→symbols
+        // (lambda→λ, nu→ν, …) so derivations read like a textbook.
+        private static string NormalizeMaxima(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
+            s = s.Replace("%pi", "π");
+            s = System.Text.RegularExpressions.Regex.Replace(s, "%([A-Za-z])", "$1");
+            s = System.Text.RegularExpressions.Regex.Replace(
+                s,
+                @"\b(alpha|beta|gamma|delta|epsilon|zeta|theta|iota|kappa|lambda|mu|nu|xi|rho|sigma|tau|phi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Sigma|Phi|Psi|Omega|eta)\b",
+                m => _greek.TryGetValue(m.Value, out var g) ? g : m.Value);
+            return s;
+        }
+
+        // True if s is a single identifier (letter/greek start, then letters/digits/_).
+        private static bool IsBareIdentifier(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            if (!(char.IsLetter(s[0]) || s[0] == '_')) return false;
+            foreach (var c in s)
+                if (!(char.IsLetterOrDigit(c) || c == '_')) return false;
+            return true;
+        }
+
+        // Normalize for matching Maxima's input echo: drop whitespace AND parentheses
+        // (Maxima reformats echoes — strips spaces and adds grouping parens, e.g.
+        // "E*t^3/(12*..)" is echoed as "(E*t^3)/(12*..)"). Ignoring both makes the
+        // echo match the original statement so it can be filtered out.
+        private static string StripForEcho(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (var c in s)
+                if (!char.IsWhiteSpace(c) && c != '(' && c != ')') sb.Append(c);
+            return sb.ToString();
+        }
+
+        // Index of the first `target` at bracket/paren depth 0, else -1.
+        private static int TopLevelIndexOf(string s, char target)
+        {
+            int depth = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                var c = s[i];
+                if (c == '(' || c == '[') depth++;
+                else if (c == ')' || c == ']') depth--;
+                else if (c == target && depth == 0) return i;
+            }
+            return -1;
         }
 
         // ─── #pip — Install Python packages ─────────────────────────
@@ -4886,9 +5379,24 @@ namespace Calcpad.Core
         {
             if (string.IsNullOrWhiteSpace(expr)) return false;
             var trimmed = expr.Trim();
-            // 1. Literal directive or function reference
+            // 1. Literal directive or function reference (e.g. "see #sym in docs"
+            // or a bare "$repeat" mention) — bypass evaluation and render as code.
+            // BUT real inline-solver invocations look like `$Name{...}` and MUST
+            // execute. Without this carve-out, lines like
+            //   $Repeat{$Repeat{K.(i;j) = K_e(i;j) @ j=i:n} @ i=1:n}
+            // were silently routed to display-only — the side-effect assignments
+            // never ran and K stayed zero, which is the RSFEA / Plate Thin /
+            // Kirchhoff Love bug that surfaced as cascading "Z null" errors
+            // because clsolve(K;F) had nothing to solve.
             if (trimmed.Length > 0 && (trimmed[0] == '#' || trimmed[0] == '$'))
+            {
+                // Solver invocation pattern: `$Name{...}`. Identify by an opening
+                // brace after the keyword name, with a matching close at the end.
+                var openBrace = trimmed.IndexOf('{');
+                if (openBrace > 1 && trimmed[^1] == '}')
+                    return false; // real solver, must execute
                 return true;
+            }
             // 2. Matrix literal [..|..|..] — whole expression is a matrix
             if (trimmed.Length > 2 && trimmed[0] == '[' && trimmed[^1] == ']' &&
                 trimmed.IndexOf('|') > 0)
@@ -4950,8 +5458,24 @@ namespace Calcpad.Core
             // rechazaba ᵧ ₓ ₐ etc., por lo que asignaciones como
             //   N_1,θₓ(ξ; η) = …
             // eran routeadas a display-only y la función nunca se registraba.
+            // Also accept Calcpad indexed-assignment LHS:
+            //   M.(i; j) — matrix element write
+            //   v.i      — vector element write (1-based index)
+            // Without these, lines like `K.(1; 1) = 4` at top level were routed
+            // to display-only rendering, silently dropping the assignment. The
+            // HTML showed the equation but the matrix was never updated, so
+            // downstream solvers (clsolve, …) ran on a zero matrix.
+            // Also `.<identifier>`: `v.k`, `v.idx_1`, `M.kx` — vector indexing with a
+            // variable expression as index. Without this branch, the expression was
+            // routed to display-only and the assignment was silently dropped, which
+            // is the "last iteration of #for doesn't apply" / "v.k = expr never
+            // writes" bug. Matches one identifier (Unicode letters/digits + _).
+            // Also accept prime characters ′ (U+2032), ″ (U+2033), ‴ (U+2034)
+            // which appear in derivative notation like Φ″_1a, Φ′_2b.
+            // Without these, functions like Φ″_1a(ξ) are routed to display-only
+            // and never registered for computation — breaking RSFEA shape functions.
             return System.Text.RegularExpressions.Regex.IsMatch(s.Trim(),
-                @"^[\p{L}_][\p{L}\p{Nd}\p{Mn}_,]*(?:\([^)]*\))?$");
+                @"^[\p{L}_][\p{L}\p{Nd}\p{Mn}_,′-‴]*(?:\([^)]*\)|\.\([^)]*\)|\.\p{Nd}+|\.[\p{L}_][\p{L}\p{Nd}_]*)?$");
         }
 
         /// <summary>

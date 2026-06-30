@@ -25,6 +25,8 @@ namespace Calcpad.Core
         private readonly Container<CustomFunction> _functions = new();
         private readonly Dictionary<string, Variable> _variables = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Unit> _units = new(StringComparer.Ordinal);
+        //  Definicion simbolica (RHS) de cada variable, para la expansion en #noc (igual que Calcpad puro).
+        private readonly Dictionary<string, Token[]> _definitions = new(StringComparer.Ordinal);
         private readonly Input _input;
         private readonly Evaluator _evaluator;
         private Calculator _calc;
@@ -560,7 +562,84 @@ namespace Calcpad.Core
                 AddFunction(input);
             }
             else
+            {
                 _rpn = Input.GetRpn(input);
+                //  Recordar la definicion simbolica (RHS) para la expansion en #noc. Metadato puro.
+                if (_rpn.Length > 2 &&
+                    _rpn[0].Type == TokenTypes.Variable &&
+                    IsAssignment(_rpn[^1].Content))
+                    _definitions[_rpn[0].Content] = _rpn[1..^1];
+            }
+        }
+
+        //  #noc: expansion simbolica. Devuelve una copia de rpn donde cada variable con definicion
+        //  de FORMULA se reemplaza por su RHS, manteniendo NUMEROS puros como simbolo (E sigue
+        //  siendo E, no 24850000). Solo display — nunca al calcular. Igual que Calcpad puro.
+        private Token[] ExpandDefinitions(Token[] rpn)
+        {
+            if (_definitions.Count == 0 || rpn is null || rpn.Length == 0)
+                return rpn;
+
+            if (rpn.Length == 1 &&
+                rpn[0].Type == TokenTypes.Variable &&
+                _definitions.TryGetValue(rpn[0].Content, out var bareDef) &&
+                IsFormula(bareDef))
+            {
+                var assign = new Token("=", TokenTypes.Operator,
+                    Calculator.OperatorOrder[Calculator.OperatorIndex['=']]);
+                var rewritten = new List<Token>(bareDef.Length + 2) { rpn[0] };
+                rewritten.AddRange(bareDef);
+                rewritten.Add(assign);
+                rpn = [.. rewritten];
+            }
+
+            var skipFirst = rpn[0].Type == TokenTypes.Variable && IsAssignment(rpn[^1].Content);
+            var expanded = new List<Token>(rpn.Length);
+            var changed = false;
+            for (int i = 0, len = rpn.Length; i < len; ++i)
+            {
+                var t = rpn[i];
+                if (!(i == 0 && skipFirst) &&
+                    t.Type == TokenTypes.Variable &&
+                    _definitions.TryGetValue(t.Content, out var def) &&
+                    IsFormula(def))
+                {
+                    ExpandInto(expanded, def, [t.Content]);
+                    changed = true;
+                }
+                else
+                    expanded.Add(t);
+            }
+            return changed ? [.. expanded] : rpn;
+
+            static bool IsFormula(Token[] def)
+            {
+                //  Solo FORMULAS (mas de un token / con variables). NO se expanden: alias (z=x),
+                //  NUMERO puro / constante (E=24850000, x=3) -> queda simbolo, ni literal vector/matriz.
+                if (def.Length == 1 && def[0].Type is TokenTypes.Variable or TokenTypes.Constant)
+                    return false;
+                foreach (var t in def)
+                    if (t.Type is TokenTypes.Vector or TokenTypes.Matrix or TokenTypes.RowDivisor)
+                        return false;
+                return true;
+            }
+
+            void ExpandInto(List<Token> target, Token[] def, HashSet<string> visited)
+            {
+                foreach (var t in def)
+                {
+                    if (t.Type == TokenTypes.Variable &&
+                        visited.Add(t.Content) &&
+                        _definitions.TryGetValue(t.Content, out var inner) &&
+                        IsFormula(inner))
+                    {
+                        ExpandInto(target, inner, visited);
+                        visited.Remove(t.Content);
+                    }
+                    else
+                        target.Add(t);
+                }
+            }
         }
 
         // Acepta · (middle dot, U+00B7), × (U+00D7) y ∗ (U+2217) como alias de

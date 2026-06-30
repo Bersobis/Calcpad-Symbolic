@@ -540,9 +540,16 @@ namespace Calcpad.Core
                 {
                     var count = (int)t.Index;
                     vt.Vector = new(StackPopAndExpandRealValues(count));
-                    // Vectors created with ';' separator are row vectors
-                    // (not from '|' which creates Matrix via RowDivisor)
-                    vt.Vector.IsRow = true;
+                    // Calcpad convention: `[a; b; c]` (semicolon = row separator)
+                    // builds a column vector — each element on its own row, vertically
+                    // stacked. The legacy `IsRow = true` here broke transp(v)*D*v in
+                    // FEA bilinear forms (e.g. K_e of plate elements): transp on a
+                    // "row" vector flipped it to "column", then row*column became
+                    // element-wise instead of inner product → K_e[i,j] came out as a
+                    // vector instead of a scalar → K_e never filled → clsolve produced
+                    // null → cascading "Z undefined" errors in RSFEA / Plate Thin /
+                    // Kirchhoff Love benchmarks.
+                    vt.Vector.IsRow = false;
                     return vt.Vector;
                 }
                 else
@@ -563,6 +570,18 @@ namespace Calcpad.Core
                             throw Exceptions.IndexOutOfRange(i.ToString());
                         t.Index = i;
                         return cells[i] ?? new Matrix(0, 0);
+                    }
+                    // DEBUG: log when target is not vector to diagnose RSFEA bug
+                    if (target is not Vector)
+                    {
+                        try
+                        {
+                            var typeName = target?.GetType().FullName ?? "<null>";
+                            var content = (target is RealValue rv) ? $" d={rv.D}" : "";
+                            var line = $"[DBG IndexTarget] tokenContent='{t.Content}' tokenType={t.Type} tokenIndex={t.Index} | targetType={typeName}{content}\n";
+                            System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "calcpad_dbg.log"), line);
+                        }
+                        catch { }
                     }
                     var vector = IValue.AsVector(target, Exceptions.Items.IndexTarget);
                     if (i < 1 || i > vector.Length)

@@ -10,6 +10,19 @@ Calcpad-Symbolic extends CalcpadCE with three CAS engines, interactive FEM visua
 
 ---
 
+## Novedades — v1.9.4 (2026-06-29)
+
+- **Bloques `#python` / `#maxima` más robustos.** Las líneas dentro de estos bloques ahora se
+  capturan **crudas**, preservando la indentación de Python y sin que los `:` `;` `(` `[` (que en
+  Calcpad son caracteres de *extensión de línea*) empalmen un `for`/`if` con la línea siguiente.
+  Antes esto causaba `SyntaxError` en Python o que el bloque Maxima llegara vacío.
+- **Las directivas (`#for`/`#loop`/`#if`/…) siempre van en su propia línea** — una etiqueta de
+  texto que termina en `:` ya no se "traga" la directiva siguiente.
+- **Auto-embebido de la librería de gráficas `mlplot.cpd`** (`figure3$`/`fill3$`/…) sin necesidad
+  de `#include`.
+
+---
+
 ## 🚀 Quick start — mixing text, equations, symbolic and numeric
 
 This is the **most common** thing people want to do — write a paragraph that
@@ -128,7 +141,27 @@ Export variables to CalcpadCE: `print(f"CALCPAD:var={value}")`
 
 ### 3. Maxima CAS — `#maxima` / `#end maxima`
 
-Execute Maxima computer algebra system. Supports diff, integrate, solve, laplace, ode2, taylor, eigenvalues, matrices. Lines with `;` produce output, `$` are silent.
+Execute the [Maxima](https://maxima.sourceforge.io/) computer algebra system and render every result as **proper Calcpad math** (fractions, powers, √, π, matrices). Supports `diff`, `integrate`, `solve`, `factor`, `expand`, `taylor`, `laplace`/`ilt`, `ode2`, `limit`, `determinant`, `invert`, `eigenvalues`, matrices and more.
+
+**Two forms:**
+
+- **Inline** — one expression on the same line as `#maxima` (no `;`, no `#end`):
+  ```
+  #maxima diff(x^3 + 2*x, x)
+  #maxima integrate(cos(x), x)
+  ```
+- **Block** — `#maxima` alone, several `;`-terminated statements, closed by `#end maxima`. State carries across statements (define `A:` then use `A`):
+  ```
+  #maxima
+  A: matrix([a, b], [c, d]);
+  determinant(A);
+  eigenvalues(A);
+  #end maxima
+  ```
+
+**Rendering:** the output shows `operation = result`, both as math. Operations with standard notation use it (`d/dx`, `∫ … dx`, `det A`, `A⁻¹`, `Aᵀ`, `ℒ{·}`, `ℒ⁻¹{·}`, `lim`, `|·|`); ordinary vs **partial** derivatives are auto-detected (`d/dx` for single-variable, `∂/∂x` and mixed `∂²/∂x∂y` when the expression has several variables). Transformation commands without a symbol (`solve`, `factor`, `taylor`, …) drop the command word and show the operand, e.g. `taylor(sin(x),x,0,7)` renders as `sin(x) = x − x³/6 + x⁵/120 − …`.
+
+Requires Maxima installed (auto-detected at `C:\maxima-*\bin\maxima.bat` or on `PATH`).
 
 ### 4. Package Manager — `#pip install`
 
@@ -652,7 +685,7 @@ Complete finite element analysis examples with step-by-step symbolic formulation
 - Python packages: `pip install numpy sympy openseespy` (or use `#pip` inside Calcpad)
 
 ### Download
-- **[Calcpad-Symbolic-Setup-1.8.17.exe](https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic/releases/latest)** — Windows installer
+- **[Calcpad-Symbolic-Setup-1.9.4.exe](https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic/releases/latest)** — Windows installer
 - **[Calcpad-Symbolic-win-x64.zip](https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic/releases/latest)** — Portable zip
 
 ### Build from Source
@@ -909,14 +942,51 @@ uy
 
 ### #maxima — Maxima CAS
 
+Bridges to the [Maxima](https://maxima.sourceforge.io/) CAS and re-renders the 1-D
+result as native Calcpad math. Each statement prints as `operation = result`.
+
+**Block form** (state carries across statements; `;` shows the value):
+
 ```
 #maxima
-diff(x^2 + 3*x + 1, x);
-laplace(sin(t), t, s);
+diff(x^2 + 3*x + 1, x);          'd/dx (x²+3·x+1) = 2·x+3
+integrate(x^2, x, 0, 1);         '∫₀¹ x² dx = 1/3
+solve(x^2 - 4, x);               'x²−4 = [x=−2, x=2]
+laplace(sin(t), t, s);           'ℒ{sin(t)} = 1/(s²+1)
 ode2('diff(y,x,2) + 4*y = 0, y, x);
-eigenvalues(matrix([a, b], [c, d]));
+taylor(sin(x), x, 0, 7);         'sin(x) = x − x³/6 + x⁵/120 − x⁷/5040
+A: matrix([a, b], [c, d]);       'A = [a b | c d]
+determinant(A);                  'det A = a·d − b·c
+invert(A);                       'A⁻¹ = [ … ]
+eigenvalues(A);                  'λ(A) = [ … ]
 #end maxima
 ```
+
+**Inline form** — one expression per line, no `#end`:
+
+```
+#maxima diff(x^3 + 2*x, x)
+#maxima factor(x^2 - 1)
+```
+
+**Partial derivatives** are detected automatically from the operand's variables:
+
+```
+#maxima
+diff(x^3 + 2*x, x);       'd/dx  (single variable → ordinary)
+diff(x^2*y + y^3, x);     '∂/∂x  (has y → partial)
+diff(x^2*y^3, x, 1, y, 1);'∂²/∂x∂y  (mixed partial)
+#end maxima
+```
+
+**Notation map:** `integrate`→`∫`, `diff`→`d/dx` · `∂/∂x`, `determinant`→`det`,
+`invert`→`A⁻¹`, `transpose`→`Aᵀ`, `laplace`→`ℒ{·}`, `ilt`→`ℒ⁻¹{·}`, `limit`→`lim`,
+`abs`→`|·|`, `eigenvalues`→`λ(·)`. Commands without a standard symbol
+(`solve`, `factor`, `expand`, `taylor`, `ratsimp`, …) drop the command word and
+show only the operand and result.
+
+> Both `.cpd` (legacy) and `.cpds` (native Symbolic) files are associated with
+> Calcpad-Symbolic by the installer, so double-clicking either opens this app.
 
 ### #deq — Display Equations
 

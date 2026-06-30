@@ -51,7 +51,12 @@ namespace Calcpad.Core
 
             _size = values.Length;
             _values = values;
-            IsRow = true; // Vectors created with [a; b] are rows
+            // Calcpad convention: `[a; b; c]` creates a COLUMN vector (semicolon
+            // separates rows → each element on its own row → vertical stack).
+            // Previous comment claimed "rows" but that broke transp(v)*D*v which
+            // requires `v` to be column so that `transp(v)` flips to row and the
+            // row*col product collapses to a scalar (inner product).
+            IsRow = false;
         }
 
         internal Vector(int size)

@@ -119,7 +119,36 @@ namespace Calcpad.Core
                     if (b is HpMatrix hp_mb) return hp_va * hp_mb;
                 }
                 if (b is RealValue rb) return va * rb;
-                if (b is Vector vb) return va * vb;
+                if (b is Vector vb)
+                {
+                    // Calcpad upstream semantics: row × col → scalar (inner product),
+                    // col × row → matrix (outer product). Without these the bilinear
+                    // form transp(v)*D*v in FEA reduces to element-wise multiplication
+                    // and the K_e/BTDB integrand collapses to a vector instead of a
+                    // scalar — which is the RSFEA "K assembly only fills supports"
+                    // root cause. Vector*Vector with both same orientation keeps the
+                    // legacy element-wise behavior used by other examples.
+                    if (va.IsRow && !vb.IsRow)
+                    {
+                        if (va.Length != vb.Length)
+                            throw Exceptions.MatrixDimensions();
+                        var sum = va[0] * vb[0];
+                        for (int i = 1; i < va.Length; ++i)
+                            sum += va[i] * vb[i];
+                        return sum;
+                    }
+                    if (!va.IsRow && vb.IsRow)
+                    {
+                        var rows = va.Length;
+                        var cols = vb.Length;
+                        var outer = new Matrix(rows, cols);
+                        for (int i = 0; i < rows; ++i)
+                            for (int j = 0; j < cols; ++j)
+                                outer[i, j] = va[i] * vb[j];
+                        return outer;
+                    }
+                    return va * vb;
+                }
                 if (b is Matrix mb) return va * mb;
             }
             else if (a is Matrix ma)

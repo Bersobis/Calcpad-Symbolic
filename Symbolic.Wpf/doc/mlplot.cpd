@@ -1,0 +1,97 @@
+#hide
+"mlplot.cpd — API de graficas estilo MATLAB para Calcpad.
+"Todo el dibujo (canvas/<>) vive en mlplot.js. Estas #def SOLO llaman a ML.* :
+"ningun .cpd del usuario escribe '<> , solo: #include mlplot.cpd ; calcular ; graficar.
+"Nombres = funciones de MATLAB. Color = ULTIMO argumento, pelado (red, #0000cc, royalblue).
+"
+"USO:
+"  #include mlplot.cpd
+"  ... calculos ...
+"  #val
+"  figure$(fig1; W; H)        ' abre el lienzo (w,h en px)
+"  axis$(x0; x1; y0; y1)      ' rango de datos -> mapea a pixeles
+"  patch$(x1;y1; x2;y2; x3;y3; x4;y4; t)   ' cuadrilatero coloreado por t (0..1), jet_r
+"  plot$(x1;y1; x2;y2; col)   ' segmento
+"  quiver$(x;y; dx;dy; col)   ' flecha (vector)
+"  moment$(x;y; col)          ' flecha curva de momento
+"  text$(x;y; s; col) | title$(s) | xlabel$(s) | ylabel$(s)
+"  colorbar$(vmin; vmax)      ' barra de color con valores
+"  endfig$                    ' cierra
+"  #equ
+"
+"--- ENVOLTORIO (unica parte con <> ; carga mlplot.js y abre el <script>) ---
+#def figure$(id$; w$; h$) = '<script src="https://calcpad.local/mlplot.js"></script><script>ML.figure("id$", 'w$', 'h$');
+#def endfig$ = '</script>
+"--- EJES ---
+#def axis$(x0$; x1$; y0$; y1$) = 'ML.axis('x0$', 'x1$', 'y0$', 'y1$');
+#def axischart$(x0$; x1$; y0$; y1$) = 'ML.axischart('x0$', 'x1$', 'y0$', 'y1$');
+#def semilogx$(x0$; x1$; y0$; y1$) = 'ML.axislog('x0$', 'x1$', 'y0$', 'y1$', 1, 0);
+#def semilogy$(x0$; x1$; y0$; y1$) = 'ML.axislog('x0$', 'x1$', 'y0$', 'y1$', 0, 1);
+#def loglog$(x0$; x1$; y0$; y1$) = 'ML.axislog('x0$', 'x1$', 'y0$', 'y1$', 1, 1);
+#def grid$(ndx$; ndy$) = 'ML.grid('ndx$', 'ndy$');
+#def datatip$(s$) = 'ML.datatip("s$");
+#def datapoint$(x$; y$; v$) = 'ML.datapoint('x$', 'y$', 'v$');
+#def hold$ = 'ML.hold();
+"--- RELLENOS / MALLAS ---
+#def patch$(x1$; y1$; x2$; y2$; x3$; y3$; x4$; y4$; t$) = 'ML.patch(['x1$', 'y1$', 'x2$', 'y2$', 'x3$', 'y3$', 'x4$', 'y4$'], 't$');
+#def fill$(x1$; y1$; x2$; y2$; x3$; y3$; x4$; y4$; col$) = 'ML.fill(['x1$', 'y1$', 'x2$', 'y2$', 'x3$', 'y3$', 'x4$', 'y4$'], "col$");
+#def rectangle$(x1$; y1$; x2$; y2$; col$) = 'ML.rectangle('x1$', 'y1$', 'x2$', 'y2$', "col$");
+"--- LINEAS / PUNTOS ---
+#def plot$(x1$; y1$; x2$; y2$; col$) = 'ML.plot('x1$', 'y1$', 'x2$', 'y2$', "col$");
+#def line$(x1$; y1$; x2$; y2$; col$) = 'ML.line('x1$', 'y1$', 'x2$', 'y2$', "col$");
+#def scatter$(x$; y$; col$) = 'ML.scatter('x$', 'y$', "col$");
+#def fixed$(x1$; y$; x2$) = 'ML.fixed('x1$', 'y$', 'x2$');
+#def pinned$(x$; y$) = 'ML.pinned('x$', 'y$');
+"--- CHARTS MATLAB (1 elemento por llamada ; el .cpd hace el #for) ---
+#def bar$(x$; y$; w$; col$) = 'ML.bar('x$', 'y$', 'w$', "col$");
+#def stem$(x$; y$; col$) = 'ML.stem('x$', 'y$', "col$");
+#def area$(x1$; y1$; x2$; y2$; col$) = 'ML.area('x1$', 'y1$', 'x2$', 'y2$', "col$");
+#def stairs$(x1$; y1$; x2$; y2$; col$) = 'ML.stairs('x1$', 'y1$', 'x2$', 'y2$', "col$");
+#def errorbar$(x$; y$; e$; col$) = 'ML.errorbar('x$', 'y$', 'e$', "col$");
+#def marker$(x$; y$; t$; col$) = 'ML.marker('x$', 'y$', "t$", "col$");
+#def imagesc$(x$; y$; w$; h$; t$) = 'ML.imagesc('x$', 'y$', 'w$', 'h$', 't$');
+#def contour$(x0$; y0$; x1$; y1$; v00$; v10$; v11$; v01$; lv$; col$) = 'ML.contourCell('x0$', 'y0$', 'x1$', 'y1$', 'v00$', 'v10$', 'v11$', 'v01$', 'lv$', "col$");
+#def polar$(th$; r$; col$) = 'ML.polar('th$', 'r$', "col$");
+#def legend$(x$; y$; s$; col$) = 'ML.legend('x$', 'y$', "s$", "col$");
+#def pie$(cx$; cy$; r$; a0$; a1$; col$) = 'ML.pie('cx$', 'cy$', 'r$', 'a0$', 'a1$', "col$");
+#def compass$(dx$; dy$; col$) = 'ML.compass('dx$', 'dy$', "col$");
+"--- FLECHAS ---
+#def quiver$(x$; y$; dx$; dy$; col$) = 'ML.quiver('x$', 'y$', 'dx$', 'dy$', "col$");
+#def moment$(x$; y$; col$) = 'ML.moment('x$', 'y$', "col$");
+"--- TEXTO / TITULOS ---
+#def text$(x$; y$; s$; col$) = 'ML.text('x$', 'y$', "s$", "col$");
+#def title$(s$) = 'ML.title("s$");
+#def xlabel$(s$) = 'ML.xlabel("s$");
+#def ylabel$(s$) = 'ML.ylabel("s$");
+"--- COLOR ---
+#def colorbar$(vmin$; vmax$) = 'ML.colorbar('vmin$', 'vmax$');
+#def colormap$(name$) = 'ML.colormap("name$");
+"--- 3D (surf / mesh / fill3) ; flujo: figure$ view3$ axis3$ fill3$... render3$ colorbar$ endfig$ ---
+#def figure3$(id$; w$; h$) = '<script src="https://calcpad.local/glplot.js"></script><script>GL3.figure3("id$", 'w$', 'h$');
+#def line3$(x1$; y1$; z1$; x2$; y2$; z2$; col$) = 'GL3.line3('x1$', 'y1$', 'z1$', 'x2$', 'y2$', 'z2$', "col$");
+#def tick3$(x$; y$; z$; v$) = 'GL3.tick3('x$', 'y$', 'z$', 'v$');
+#def label3$(x$; y$; z$; s$) = 'GL3.tick3('x$', 'y$', 'z$', "s$");
+#def cartesian3$(x0$; x1$; y0$; y1$; z0$; z1$; ndx$; ndz$) = 'GL3.cartesian3('x0$', 'x1$', 'y0$', 'y1$', 'z0$', 'z1$', 'ndx$', 'ndz$');
+#def datatip3$(s$) = 'GL3.datatip("s$");
+#def datapoint3$(x$; z$; v$) = 'GL3.datapoint('x$', 0, 'z$', 'v$');
+#def datapoint3d$(x$; y$; z$; v$) = 'GL3.datapoint('x$', 'y$', 'z$', 'v$');
+#def colorbar3$(vmin$; vmax$; h$) = '<script>GL3.colorbar3('vmin$', 'vmax$', 'h$');</script>
+#def view3$(az$; el$) = 'GL3.view3('az$', 'el$');
+#def axis3$(x0$; x1$; y0$; y1$; z0$; z1$) = 'GL3.axis3('x0$', 'x1$', 'y0$', 'y1$', 'z0$', 'z1$');
+#def fill3$(x1$; y1$; z1$; x2$; y2$; z2$; x3$; y3$; z3$; x4$; y4$; z4$; t1$; t2$; t3$; t4$) = 'GL3.fill3(['x1$', 'y1$', 'z1$', 'x2$', 'y2$', 'z2$', 'x3$', 'y3$', 'z3$', 'x4$', 'y4$', 'z4$'], 't1$', 't2$', 't3$', 't4$');
+"--- 3D charts (scatter3 / quiver3 / stem3) ---
+#def scatter3$(x$; y$; z$; t$) = 'GL3.point3('x$', 'y$', 'z$', 't$');
+#def quiver3$(x$; y$; z$; dx$; dy$; dz$; col$) = 'GL3.quiver3('x$', 'y$', 'z$', 'dx$', 'dy$', 'dz$', "col$");
+#def stem3$(x$; y$; z$; t$) = 'GL3.stem3('x$', 'y$', 'z$', 't$');
+#def trisurf$(x1$; y1$; z1$; x2$; y2$; z2$; x3$; y3$; z3$; t1$; t2$; t3$) = 'GL3.tri3('x1$', 'y1$', 'z1$', 'x2$', 'y2$', 'z2$', 'x3$', 'y3$', 'z3$', 't1$', 't2$', 't3$');
+#def sphere3$(cx$; cy$; cz$; r$; t$) = 'GL3.sphere('cx$', 'cy$', 'cz$', 'r$', 't$');
+#def cylinder3$(cx$; cy$; z0$; z1$; r$; t$) = 'GL3.cylinder('cx$', 'cy$', 'z0$', 'z1$', 'r$', 't$');
+#def lighting$(on$) = 'GL3.lighting("on$");
+#def shading$(m$) = 'GL3.shading("m$");
+#def render3$ = 'GL3.render3();
+"--- BOTONES paso a paso (stepper) ; flujo: steps$ step$... endsteps$ ---
+"  En el texto de step$: *negrita* y // = salto de linea. Evitar " ; ' < > en el texto.
+#def steps$(titulo$) = '<script src="https://calcpad.local/mlplot.js"></script><script>ML.steps("titulo$");
+#def step$(t$; html$) = 'ML.step("t$", "html$");
+#def endsteps$ = 'ML.endsteps();</script>
+#show

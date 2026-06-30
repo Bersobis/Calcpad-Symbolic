@@ -612,12 +612,12 @@ namespace Calcpad.Core
         private static IValue Rank(in IValue M) => IValue.AsMatrix(M).Rank();
         private static IValue Transpose(in IValue M)
         {
-            // If input is a Vector, return a Vector with IsRow flipped
             if (M is Vector vec && vec is not HpVector)
             {
-                var result = new Vector(vec.Values[..vec.Length]);
-                result.IsRow = !vec.IsRow;
-                return result;
+                var rowMat = new Matrix(1, vec.Length);
+                for (int k = 0; k < vec.Length; ++k)
+                    rowMat[0, k] = vec[k];
+                return rowMat;
             }
 
             var m = IValue.AsMatrix(M);
@@ -951,6 +951,22 @@ namespace Calcpad.Core
 
             if (a is DiagonalMatrix dm)
                 return dm.LSolve(b);
+
+            // Fallback: pure-Calcpad-compatible behaviour. The user assembled the
+            // stiffness matrix as a plain Matrix (via #for loops with K.(i;j) = …)
+            // so it's symmetric by construction but not typed as SymmetricMatrix.
+            // Convert the upper triangle and dispatch — matches pure Calcpad semantics
+            // and unblocks Rectangular Slab FEA / Kirchhoff plate / Plate Thin benchmarks
+            // (Symbolic regression vs upstream Calcpad).
+            if (a.RowCount == a.ColCount)
+            {
+                var n = a.RowCount;
+                var symm = new SymmetricMatrix(n);
+                for (int i = 0; i < n; ++i)
+                    for (int j = i; j < n; ++j)
+                        symm[i, j] = a[i, j];
+                return symm.ClSolve(b);
+            }
 
             throw Exceptions.MatrixMustBeSymmetric();
         }

@@ -27,6 +27,18 @@ namespace Calcpad.Core
 
         internal PlotMapParser(MathParser parser, PlotSettings settings) : base(parser, settings) { }
 
+        /// <summary>Estilo de render del mapa de color.</summary>
+        internal enum MapStyle
+        {
+            Bands,          // 12 bandas discretas (clásico)
+            Smooth,         // color continuo (gradiente liso)
+            Flat,           // celdas/cuadros: un color por elemento (sin interpolar)
+            Contours,       // solo líneas de nivel (isolíneas) sobre fondo blanco
+            BandsContours   // bandas + líneas de nivel (favorito)
+        }
+        internal MapStyle Style { get; set; } = MapStyle.Bands;
+        private bool Continuous => Style == MapStyle.Smooth;
+
         internal override string Parse(ReadOnlySpan<char> script, bool calculate)
         {
             int braceStart = script.IndexOf('{');
@@ -197,6 +209,7 @@ namespace Calcpad.Core
                 // Rasterize at plot resolution
                 int rasterW = plotWidth, rasterH = plotHeight;
                 using var pixBmp = new SKBitmap(rasterW, rasterH);
+                int[] bandBuf = new int[rasterW * rasterH];   // 0=vacío, sino banda+1 (para líneas de nivel)
                 for (int py = 0; py < rasterH; py++)
                 {
                     double physY = ymin + (rasterH - 1 - py) * dy / rasterH;
@@ -261,30 +274,69 @@ namespace Calcpad.Core
                                     if (physX < splitX) { lmin = vmin1; lmax = vmax1; }
                                     else { lmin = vmin2; lmax = vmax2; }
                                 }
-                                pixBmp.SetPixel(px, py, GetMapColorShadow(val, lmin, lmax, gradX, gradY));
+                                // Flat: un color por elemento (media de nodos), sin sombreado
+                                if (Style == MapStyle.Flat)
+                                {
+                                    val = 0.25 * (eb.ev[0] + eb.ev[1] + eb.ev[2] + eb.ev[3]);
+                                    gradX = 0; gradY = 0;
+                                }
+                                // índice de banda (para overlay de líneas de nivel)
+                                double nrm = lmax > lmin ? Math.Clamp((val - lmin) / (lmax - lmin), 0, 1) : 0;
+                                int bIdx = (int)(nrm * NBands); if (bIdx >= NBands) bIdx = NBands - 1;
+                                bandBuf[py * rasterW + px] = bIdx + 1;
+                                SKColor col = (Style == MapStyle.Contours)
+                                    ? SKColors.White
+                                    : GetMapColorShadow(val, lmin, lmax, gradX, gradY);
+                                pixBmp.SetPixel(px, py, col);
                                 break;
                             }
                         }
                     }
                 }
+                // Overlay de LÍNEAS DE NIVEL (isolíneas) donde cambia la banda
+                if (Style == MapStyle.Contours || Style == MapStyle.BandsContours)
+                {
+                    var lineCol = new SKColor(0, 0, 0, 220);
+                    int lw = Math.Max(1, dpr / 2);   // grosor de línea de nivel (~2px lógicos)
+                    for (int py = 0; py < rasterH; py++)
+                        for (int px = 0; px < rasterW; px++)
+                        {
+                            int b = bandBuf[py * rasterW + px];
+                            if (b == 0) continue;
+                            bool edge =
+                                (px + 1 < rasterW && bandBuf[py * rasterW + px + 1] != 0 && bandBuf[py * rasterW + px + 1] != b) ||
+                                (py + 1 < rasterH && bandBuf[(py + 1) * rasterW + px] != 0 && bandBuf[(py + 1) * rasterW + px] != b);
+                            if (!edge) continue;
+                            for (int oy = -lw; oy <= lw; oy++)
+                                for (int ox = -lw; ox <= lw; ox++)
+                                {
+                                    int qx = px + ox, qy = py + oy;
+                                    if (qx >= 0 && qx < rasterW && qy >= 0 && qy < rasterH && bandBuf[qy * rasterW + qx] != 0)
+                                        pixBmp.SetPixel(qx, qy, lineCol);
+                                }
+                        }
+                }
                 canvas.DrawBitmap(pixBmp, new SKRect(margin, margin, margin + plotWidth, margin + plotHeight));
 
-                // Draw element edges
-                using var edgePaint = new SKPaint { Color = new SKColor(0, 0, 0, 70), StrokeWidth = 0.7f * dpr, Style = SKPaintStyle.Stroke, IsAntialias = true };
-                for (int e = 0; e < ne; e++)
+                // Bordes de elemento (malla): solo en Bandas y Flat (celdas)
+                if (Style == MapStyle.Bands || Style == MapStyle.Flat)
                 {
-                    var path = new SKPath();
-                    bool valid = true;
-                    for (int nn = 0; nn < nodesPerElem; nn++)
+                    using var edgePaint = new SKPaint { Color = new SKColor(0, 0, 0, 70), StrokeWidth = 0.7f * dpr, Style = SKPaintStyle.Stroke, IsAntialias = true };
+                    for (int e = 0; e < ne; e++)
                     {
-                        int idx = elements[e, nn];
-                        if (idx < 0 || idx >= nj) { valid = false; break; }
-                        float px2 = margin + (float)((xj[idx] - xmin) * sx);
-                        float py2 = margin + plotHeight - (float)((yj[idx] - ymin) * sy);
-                        if (nn == 0) path.MoveTo(px2, py2);
-                        else path.LineTo(px2, py2);
+                        var path = new SKPath();
+                        bool valid = true;
+                        for (int nn = 0; nn < nodesPerElem; nn++)
+                        {
+                            int idx = elements[e, nn];
+                            if (idx < 0 || idx >= nj) { valid = false; break; }
+                            float px2 = margin + (float)((xj[idx] - xmin) * sx);
+                            float py2 = margin + plotHeight - (float)((yj[idx] - ymin) * sy);
+                            if (nn == 0) path.MoveTo(px2, py2);
+                            else path.LineTo(px2, py2);
+                        }
+                        if (valid) { path.Close(); canvas.DrawPath(path, edgePaint); }
                     }
-                    if (valid) { path.Close(); canvas.DrawPath(path, edgePaint); }
                 }
             }
             else
@@ -452,24 +504,26 @@ namespace Calcpad.Core
         // ===================== SHARED RENDERING =====================
 
         /// <summary>Same color as $Map: Rainbow with discrete bands</summary>
-        private static SKColor GetMapColor(double value, double vmin, double vmax)
+        private SKColor GetMapColor(double value, double vmin, double vmax)
         {
             return GetMapColorShadow(value, vmin, vmax, 0, 0);
         }
 
-        /// <summary>Same color as $Map: Rainbow + shadow lighting (Phong)</summary>
-        private static SKColor GetMapColorShadow(double value, double vmin, double vmax, double gradX, double gradY)
+        /// <summary>Same color as $Map: Rainbow + shadow lighting (Phong). Continuo si Smooth.</summary>
+        private SKColor GetMapColorShadow(double value, double vmin, double vmax, double gradX, double gradY)
         {
             if (vmax <= vmin) return SKColors.Gray;
             double normalized = Math.Clamp((value - vmin) / (vmax - vmin), 0, 1);
-            // Discrete bands like $Map's non-SmoothScale default. The band index is
-            // the value's level (0..NBands-1) and `t` is normalised band-center for
-            // the rainbow mapping. The Phong shadow below modulates lightness
-            // continuously inside each band — that produces the characteristic
-            // "concentric rings with 3D shading" look of $Map.
-            int band = (int)(normalized * NBands);
-            if (band >= NBands) band = NBands - 1;
-            double t = (double)band / (NBands - 1);
+            // Banda discreta (clásico) o color continuo (Smooth).
+            double t;
+            if (Continuous)
+                t = normalized;                       // gradiente liso, sin bandas
+            else
+            {
+                int band = (int)(normalized * NBands);
+                if (band >= NBands) band = NBands - 1;
+                t = (double)band / (NBands - 1);
+            }
 
             // Rainbow (same as MapPlotter.GetRgb)
             double r, g, b;

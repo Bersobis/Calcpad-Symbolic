@@ -120,6 +120,13 @@ namespace Calcpad.Core
                 // descartable y includeLine!=0 (NO re-limpia Macros, NO toca _lineNumbers ni
                 // la salida del usuario). Asi las funciones de graficas andan sin que el .cpd
                 // escriba #include ni '<> ; el #include normal sigue intacto para todo lo demas.
+                // Libreria de graficas (figure3$/fill3$/bar$/surf...) EMBEBIDA en el
+                // codigo fuente — siempre disponible sin #include y sin archivos doc.
+                {
+                    var discard = new StringBuilder();
+                    try { Parse(EmbeddedGraphics.MlplotCpd, out _, discard, 1, false); }
+                    catch { /* si falla, seguir sin graficas */ }
+                }
                 if (AutoIncludeFiles is not null && Include is not null)
                 {
                     var discard = new StringBuilder();

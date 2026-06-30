@@ -103,6 +103,57 @@ namespace Calcpad.Core
                         continue;
                     }
 
+                    // Dentro de #python capturamos la línea CRUDA y temprano,
+                    // PRESERVANDO la indentación (Python la necesita). Por la ruta
+                    // tardía las líneas se trimean y, como ':' '(' '[' son caracteres
+                    // de extensión de línea en Calcpad, los for/if (que terminan en
+                    // ':') se empalmaban en una sola línea -> SyntaxError. Detectamos
+                    // "#end python" por texto crudo.
+                    if (_insidePythonBlock)
+                    {
+                        var pyStart = lines[_currentLine];
+                        var pyEnd = lines[_currentLine + 1];
+                        var pyRaw = code[pyStart..pyEnd];
+                        var pyEol = pyRaw.IndexOf('\v');
+                        if (pyEol > -1) pyRaw = pyRaw[..pyEol];
+                        var pyLine = pyRaw.ToString().TrimEnd('\n', '\r');
+                        if (pyLine.TrimStart().StartsWith("#end python", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ParseKeywordEndPython();
+                            continue;
+                        }
+                        _pythonBlockLines?.Add(pyLine);   // SIN Trim de la izquierda: conserva indentación
+                        continue;
+                    }
+
+                    // Dentro de #maxima capturamos la línea CRUDA y temprano,
+                    // antes del fast-path de cache y de la lógica de extensión de
+                    // línea. Las sentencias Maxima terminan en ';' (y usan ':' '('
+                    // '[' etc.), que son caracteres de extensión de línea en
+                    // Calcpad: por la ruta tardía esas líneas se empalmaban/saltaban
+                    // y el bloque llegaba vacío a ExecuteMaximaCode. Detectamos el
+                    // cierre "#end maxima" por texto crudo (el cache puede tener
+                    // keyword=None todavía).
+                    if (_insideMaximaBlock)
+                    {
+                        var mxStart = lines[_currentLine];
+                        var mxEnd = lines[_currentLine + 1];
+                        var mxRaw = code[mxStart..mxEnd];
+                        var mxEol = mxRaw.IndexOf('\v');
+                        if (mxEol > -1) mxRaw = mxRaw[..mxEol];
+                        var mxTxt = mxRaw.ToString().TrimEnd('\n', '\r').Trim();
+                        if (mxTxt.StartsWith("#end maxima", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ParseKeywordEndMaxima();
+                            continue;
+                        }
+                        // Ignorar líneas vacías y comentarios de texto ('...) dentro
+                        // del bloque; lo demás es código Maxima literal.
+                        if (mxTxt.Length > 0)
+                            _maximaBlockLines?.Add(mxTxt);
+                        continue;
+                    }
+
                     // Dentro de #plotly/#three/#mermaid/#canvas, capturamos
                     // la línea cruda. Detectamos el cierre por TEXTO crudo
                     // porque el cache puede tener keyword=None aún para "#end xxx".
@@ -213,7 +264,11 @@ namespace Calcpad.Core
                     // are valid JS/DSL chars that should NOT make the parser splice the
                     // next line onto this one).
                     var skipLineExtension = _insidePlotlyBlock || _insideWebGraphicBlock || _insideSvgBlock;
-                    if (!skipLineExtension && HasLineExtension(textSpan.TrimEnd()))
+                    // A directive (#for/#loop/#if/...) must always stand on its own line.
+                    // Never splice it onto the previous line via line-extension (e.g. a label
+                    // like ''X_c: ending in ':' must NOT swallow the following #for).
+                    var nextIsDirective = lineSpan.Length > 0 && lineSpan[0] == '#';
+                    if (!skipLineExtension && !nextIsDirective && HasLineExtension(textSpan.TrimEnd()))
                     {
                         var c = textSpan[^1];
                         if (c == '_')
@@ -476,6 +531,10 @@ namespace Calcpad.Core
                     s.StartsWith("$struct", StringComparison.OrdinalIgnoreCase) ||
                     s.StartsWith("$draw", StringComparison.OrdinalIgnoreCase) ||
                     s.StartsWith("$table", StringComparison.OrdinalIgnoreCase) ||
+                    s.StartsWith("$smoothmap", StringComparison.OrdinalIgnoreCase) ||
+                    s.StartsWith("$flatmap", StringComparison.OrdinalIgnoreCase) ||
+                    s.StartsWith("$contourmap", StringComparison.OrdinalIgnoreCase) ||
+                    s.StartsWith("$bandcontourmap", StringComparison.OrdinalIgnoreCase) ||
                     s.StartsWith("$plotmap", StringComparison.OrdinalIgnoreCase))
                 {
                     // Check for multiline block: has '{' but no '}'
@@ -508,6 +567,14 @@ namespace Calcpad.Core
                             plotParser = new VizParser(_parser, Settings.Plot);
                         else if (s.StartsWith("$mesh", StringComparison.OrdinalIgnoreCase))
                             plotParser = new MeshParser(_parser, Settings.Plot);
+                        else if (s.StartsWith("$smoothmap", StringComparison.OrdinalIgnoreCase))
+                            plotParser = new PlotMapParser(_parser, Settings.Plot) { Style = PlotMapParser.MapStyle.Smooth };
+                        else if (s.StartsWith("$flatmap", StringComparison.OrdinalIgnoreCase))
+                            plotParser = new PlotMapParser(_parser, Settings.Plot) { Style = PlotMapParser.MapStyle.Flat };
+                        else if (s.StartsWith("$bandcontourmap", StringComparison.OrdinalIgnoreCase))
+                            plotParser = new PlotMapParser(_parser, Settings.Plot) { Style = PlotMapParser.MapStyle.BandsContours };
+                        else if (s.StartsWith("$contourmap", StringComparison.OrdinalIgnoreCase))
+                            plotParser = new PlotMapParser(_parser, Settings.Plot) { Style = PlotMapParser.MapStyle.Contours };
                         else if (s.StartsWith("$plotmap", StringComparison.OrdinalIgnoreCase))
                             plotParser = new PlotMapParser(_parser, Settings.Plot);
                         else if (s.StartsWith("$table", StringComparison.OrdinalIgnoreCase))
@@ -775,7 +842,9 @@ namespace Calcpad.Core
             if (Debug && lineCount > 30 && _errors.Count != 0)
                 AppendErrors();
 
-            HtmlResult = _sb.ToString();
+            // Embebe la libreria de graficas (mlplot/glplot) INLINE en lugar de los
+            // <script src="calcpad.local/*.js">, para que el HTML sea autocontenido.
+            HtmlResult = EmbeddedGraphics.Inline(_sb.ToString());
 
             if (_calculate && _startLine == 0)
             {
@@ -821,12 +890,20 @@ namespace Calcpad.Core
         {
             if (string.IsNullOrWhiteSpace(value)) return false;
             var v = value.Trim();
-            // Must NOT start with operators / function-like syntax — those are math.
             if (v.Length == 0) return false;
             var first = v[0];
             if (!(char.IsLetter(first) || first == '-' || first == '+'))
                 return false;
-            // Split into word-like tokens
+            // If the expression contains math operators/constructs, it is NOT prose.
+            // This prevents false positives for expressions like
+            //   BTDB_e(i; j; ξ; η) = transp(B(i; ξ; η))*D*B(j; ξ; η)
+            // which contain 2+ "words" (BTDB, transp) but are valid math.
+            foreach (var c in v)
+            {
+                if (c == '=' || c == '*' || c == '/' || c == '^' ||
+                    c == '$' || c == '{' || c == '}' || c == '[' || c == ']')
+                    return false;
+            }
             int wordCount = 0;
             int letterRunMax = 0;
             int letterRun = 0;
@@ -849,9 +926,6 @@ namespace Calcpad.Core
                 prev = c;
             }
             if (letterRun >= 3) wordCount++;
-            // Heuristic: 2+ word-tokens of 3+ lowercase letters → likely prose,
-            // OR a digit immediately followed by letters with no operator → never
-            // valid math (e.g. "1a1enladireccion").
             return wordCount >= 2 || (sawDigitThenLetter && letterRunMax >= 4);
         }
 

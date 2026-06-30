@@ -29,6 +29,19 @@ namespace Calcpad.Core
                 _assignmentPosition = 0;
                 _hasVariables = false;
                 Token[] rpn = _parser._rpn;
+                //  #noc: arma la sustitucion simbolica (formulas expandidas, p.ej. K = [EA_L; ...] =
+                //  [E*A/L; ...]) como 2da forma. Numeros puros NO se sustituyen (E sigue siendo E).
+                //  Igual que Calcpad puro.
+                Token[] nocExpanded = null;
+                if (!_parser._isCalculated &&
+                    _parser._settings.Substitute &&
+                    _parser.VariableSubstitution != VariableSubstitutionOptions.VariablesOnly &&
+                    IsSimpleLiteral(rpn))
+                {
+                    var expandedNoc = _parser.ExpandDefinitions(rpn);
+                    if (!ReferenceEquals(expandedNoc, rpn) && IsSimpleLiteral(expandedNoc))
+                        nocExpanded = expandedNoc;
+                }
                 OutputWriter writer = format switch
                 {
                     OutputWriter.OutputFormat.Html => new HtmlWriter(_parser._settings, _parser.Phasor),
@@ -68,6 +81,20 @@ namespace Calcpad.Core
                     var equation = RenderRpn(rpn, false, writer, out var hasOperators);
                     if (_parser.VariableSubstitution != VariableSubstitutionOptions.SubstitutionsOnly)
                         _stringBuilder.Append(equation);
+
+                    //  #noc: anexa "= <expandido>" SOLO si hubo sustitucion simbolica (formulas).
+                    //  RenderRpn(..., false) = por NOMBRE (E*A/L), no sustituye valores numericos.
+                    if (nocExpanded != null)
+                    {
+                        if (_parser.VariableSubstitution == VariableSubstitutionOptions.SubstitutionsOnly)
+                            _stringBuilder.Append(RenderRpn(nocExpanded, false, writer, out _));
+                        else
+                        {
+                            var symSubst = RenderRpn(nocExpanded, false, writer, out _);
+                            if (!string.IsNullOrEmpty(symSubst))
+                                _stringBuilder.Append(assignment).Append(symSubst);
+                        }
+                    }
 
                     if (_parser._isCalculated)
                     {
@@ -182,6 +209,24 @@ namespace Calcpad.Core
 
             private static readonly sbyte PlusOrder = Calculator.OperatorOrder[Calculator.OperatorIndex['+']];
             private static readonly sbyte MinusOrder = Calculator.OperatorOrder[Calculator.OperatorIndex['-']];
+
+            //  true solo para un literal simple (variables/constantes/aritmetica/construccion de
+            //  vector-matriz) — los casos que se pueden expandir para la sustitucion simbolica de
+            //  #noc. Cualquier otra cosa (solver, funcion, indice, input) -> false (no expande).
+            private static bool IsSimpleLiteral(Token[] rpn)
+            {
+                for (int i = 0; i < rpn.Length; ++i)
+                {
+                    var tt = rpn[i].Type;
+                    if (tt is not (TokenTypes.None or TokenTypes.Constant or TokenTypes.Variable
+                        or TokenTypes.Unit or TokenTypes.Vector or TokenTypes.Matrix
+                        or TokenTypes.RowDivisor or TokenTypes.Operator or TokenTypes.BracketLeft
+                        or TokenTypes.BracketRight or TokenTypes.SquareBracketLeft
+                        or TokenTypes.SquareBracketRight or TokenTypes.Divisor))
+                        return false;
+                }
+                return true;
+            }
 
             private string RenderRpn(Token[] rpn, bool substitute, OutputWriter writer, out bool hasOperators)
             {

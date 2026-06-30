@@ -2,7 +2,7 @@
 ; Genera un instalador setup.exe
 
 #define MyAppName "Calcpad-Symbolic"
-#define MyAppVersion "1.9.3"
+#define MyAppVersion "1.9.4"
 #define MyAppPublisher "Jorge Burbano"
 #define MyAppURL "https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic"
 #define MyAppExeName "Calcpad.exe"
@@ -34,7 +34,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "fileassoc"; Description: "Associate .cpd files with Calcpad-Symbolic"; GroupDescription: "File associations:"
+Name: "fileassoc"; Description: "Associate .cpd and .cpds files with Calcpad-Symbolic"; GroupDescription: "File associations:"
 
 [Files]
 ; Application files
@@ -70,6 +70,8 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Registry]
 Root: HKA; Subkey: "Software\Classes\.cpd"; ValueType: string; ValueName: ""; ValueData: "CalcpadSymbolic.Document"; Flags: uninsdeletevalue; Tasks: fileassoc
+; .cpds es el formato NATIVO de Calcpad-Symbolic — mismo ProgID (icono + comando de apertura).
+Root: HKA; Subkey: "Software\Classes\.cpds"; ValueType: string; ValueName: ""; ValueData: "CalcpadSymbolic.Document"; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\CalcpadSymbolic.Document"; ValueType: string; ValueName: ""; ValueData: "Calcpad-Symbolic Document"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\CalcpadSymbolic.Document\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\CalcpadSymbolic.Document\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc

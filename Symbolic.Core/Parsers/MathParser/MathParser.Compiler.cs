@@ -328,7 +328,10 @@ namespace Calcpad.Core
                     '+' => Expression.Add(a, b),
                     '-' => Expression.Subtract(a, b),
                     '/' or '÷' => Expression.Divide(a, b),
-                    '*' => Expression.Multiply(a, b),
+                    // Force dispatch via IValue.op_Multiply so Vector*Vector with
+                    // row*col triggers inner product (scalar) instead of falling
+                    // through to Vector.op_Multiply which always does element-wise.
+                    '*' => DispatchMultiply(a, b),
                     '<' => Expression.LessThan(a, b),
                     '>' => Expression.GreaterThan(a, b),
                     '≤' => Expression.LessThanOrEqual(a, b),
@@ -618,6 +621,21 @@ namespace Calcpad.Core
 
             private static MethodCallExpression ParseVectorIndexToken(Expression vector, Expression ii) =>
                 Expression.Call(GetVectorElementMethod, vector, ii);
+
+            private static readonly System.Reflection.MethodInfo IValueOpMultiplyMethod =
+                typeof(IValue).GetMethod("op_Multiply",
+                    new[] { typeof(IValue), typeof(IValue) });
+
+            private static Expression DispatchMultiply(Expression a, Expression b)
+            {
+                // Use IValue.op_Multiply explicitly so Vector*Vector with row*col
+                // routes through the inner-product carve-out instead of the
+                // operator-overload resolution picking Vector.op_Multiply (which
+                // always does element-wise).
+                var ai = a.Type == typeof(IValue) ? a : Expression.Convert(a, typeof(IValue));
+                var bi = b.Type == typeof(IValue) ? b : Expression.Convert(b, typeof(IValue));
+                return Expression.Call(IValueOpMultiplyMethod, ai, bi);
+            }
 
             private static MethodCallExpression ParseMatrixIndexToken(Expression matrix, Expression ii, Expression jj) =>
                 Expression.Call(GetMatrixElementMethod, matrix, ii, jj);
