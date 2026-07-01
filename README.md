@@ -10,6 +10,20 @@ Calcpad-Symbolic extends CalcpadCE with three CAS engines, interactive FEM visua
 
 ---
 
+## Novedades — v1.9.5 (2026-07-01)
+
+- **Fix bloque `#maxima`:** se eliminó una línea basura que aparecía antes de cada
+  resultado (`Loading C:\Users\…\maxima-init.mac`). Maxima ecoa ese mensaje al cargar
+  el archivo de inicialización personal del usuario; el filtro de salida no lo
+  descartaba, así que se **renderizaba como una ecuación falsa** (`C:` → `C=`, `\` →
+  división, carpetas → variables) y además **desajustaba el emparejamiento
+  `entrada = resultado`**. Ahora se filtran las líneas `Loading …` (y los avisos Lisp
+  `;;;`), de modo que cada operación se muestra limpia y emparejada
+  (`d/dx(x²+3·x) = 2·x+3`, `∫₀¹ x² dx = 1/3`, `[x²=4] ⇒ [x=−2, x=2]`).
+- **Instalador self-contained** (runtime .NET 10 embebido): ya no pide *"You must
+  install or update .NET"*. Sin las carpetas `net10.0`/`win-x64` redundantes que
+  inflaban el paquete (~174 MB).
+
 ## Novedades — v1.9.4 (2026-06-29)
 
 - **Bloques `#python` / `#maxima` más robustos.** Las líneas dentro de estos bloques ahora se
@@ -685,7 +699,7 @@ Complete finite element analysis examples with step-by-step symbolic formulation
 - Python packages: `pip install numpy sympy openseespy` (or use `#pip` inside Calcpad)
 
 ### Download
-- **[Calcpad-Symbolic-Setup-1.9.4.exe](https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic/releases/latest)** — Windows installer
+- **[Calcpad-Symbolic-Setup-1.9.5.exe](https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic/releases/latest)** — Windows installer (self-contained, incluye el runtime .NET 10)
 - **[Calcpad-Symbolic-win-x64.zip](https://github.com/GiorgioBurbanelli89/Calcpad-Symbolic/releases/latest)** — Portable zip
 
 ### Build from Source
